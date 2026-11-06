@@ -23,7 +23,7 @@ function Preview({ asset }: { asset: MediaAsset }) {
 }
 
 export function Library() {
-  const { assets, upload, removeAsset, select, selectedAssetId, project, update, setTab } = useStore();
+  const { assets, upload, removeAsset, select, selectedAssetId, project, update, setTab, cloud } = useStore();
   const [drag, setDrag] = useState(false);
   const sel = assets.find((a) => a.id === selectedAssetId);
   return (
@@ -44,7 +44,11 @@ export function Library() {
         >
           <p>Drop audio / video files here (mp3, wav, ogg, flac, m4a, mp4, webm, mov, mkv…)</p>
           <input type="file" multiple accept="audio/*,video/*,.mkv,.mov" onChange={(e) => e.target.files && upload(e.target.files)} />
-          <small>Files are stored locally in your browser (IndexedDB). Nothing is uploaded to a server.</small>
+          <small>
+            {cloud
+              ? `Files are uploaded to ${cloud.url} (private by default — change visibility in ☁ Cloud & Sharing).`
+              : 'Local mode: files are stored in this browser (IndexedDB) and never leave your machine. Sign in under ☁ Cloud & Sharing to store them online.'}
+          </small>
         </div>
       </Section>
       <Section title={`Library (${assets.length})`}>
@@ -61,7 +65,11 @@ export function Library() {
           <tbody>
             {assets.map((a) => (
               <tr key={a.id} className={a.id === selectedAssetId ? 'sel' : ''} onClick={() => select({ selectedAssetId: a.id })}>
-                <td>{a.name}</td>
+                <td>
+                  {a.name}
+                  {cloud && a.ownerId && a.ownerId !== cloud.user.id ? <span className="hint"> · from {a.ownerName ?? 'pack'}</span> : null}
+                  {a.status === 'removed' ? <span className="hint"> · ⚠ removed</span> : null}
+                </td>
                 <td>
                   {a.kind}
                   {a.width ? ` ${a.width}×${a.height}` : ''}
@@ -86,7 +94,8 @@ export function Library() {
                     className="danger"
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (confirm(`Delete ${a.name}?`)) void removeAsset(a.id);
+                      const own = !cloud || a.ownerId === cloud.user.id;
+                      if (confirm(own ? `Delete ${a.name}?` : `Remove ${a.name} from your library?`)) void removeAsset(a.id);
                     }}
                   >
                     ✕

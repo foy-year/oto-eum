@@ -11,16 +11,25 @@ import type { MediaAsset, Project } from '../types';
 
 export interface MediaStore {
   list(): Promise<MediaAsset[]>;
-  put(asset: MediaAsset, blob: Blob): Promise<void>;
+  /** Stores the file; returns the stored asset (a server may assign a new id). */
+  put(asset: MediaAsset, blob: Blob): Promise<MediaAsset>;
   getBlob(id: string): Promise<Blob>;
   getMeta(id: string): Promise<MediaAsset | undefined>;
   remove(id: string): Promise<void>;
 }
 
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  ownerName?: string;
+  role?: 'owner' | 'editor' | 'viewer';
+}
+
 export interface ProjectStore {
-  list(): Promise<Pick<Project, 'id' | 'name'>[]>;
+  list(): Promise<ProjectSummary[]>;
   load(id: string): Promise<Project | undefined>;
-  save(p: Project): Promise<void>;
+  /** Resolves to the stored id (a server may assign a different one). */
+  save(p: Project, force?: boolean): Promise<string | void>;
   remove(id: string): Promise<void>;
 }
 
@@ -36,6 +45,7 @@ export class IdbMediaStore implements MediaStore {
   async put(asset: MediaAsset, blob: Blob) {
     await set(asset.id, blob, this.blobs);
     await set(asset.id, asset, this.meta);
+    return asset;
   }
   async getBlob(id: string) {
     const b = await get<Blob>(id, this.blobs);

@@ -21,6 +21,11 @@ export interface MediaAsset {
   /** Detected/declared video frame rate, used to quantise frame lookups. */
   fps?: number;
   createdAt: number;
+  /** Cloud mode only. */
+  visibility?: 'private' | 'unlisted' | 'public';
+  ownerId?: string;
+  ownerName?: string;
+  status?: 'active' | 'removed';
 }
 
 /** A single MIDI-like note. `pitch` is a MIDI note number (69 = A4 = 440 Hz). */

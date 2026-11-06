@@ -1,6 +1,7 @@
-node_modules
-dist
-public/models
 *.local
 .DS_Store
+data
+dist
+node_modules
+public/models
 test-results

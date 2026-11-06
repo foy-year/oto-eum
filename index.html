@@ -5,8 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>oto-eum · 音MAD toolkit</title>
   </head>
-  <body>
+  <body style="background:#0d0f15">
     <div id="root"></div>
+    <script>
+      // Never leave a blank page: show load/runtime errors instead.
+      (function () {
+        function show(msg) {
+          var root = document.getElementById('root');
+          if (root && root.childElementCount) return;
+          document.body.innerHTML = '<div class="boot-error" style="padding:24px;font:14px/1.5 system-ui,sans-serif;color:#e4e8f1;background:#0d0f15;min-height:100vh">' +
+            '<h2>oto-eum could not start</h2><p>' + msg + '</p></div>';
+        }
+        window.addEventListener('error', function (e) { show(String(e.message || e)); });
+        window.addEventListener('unhandledrejection', function (e) { show(String((e.reason && e.reason.message) || e.reason)); });
+        setTimeout(function () {
+          show(location.pathname.indexOf('/src/') >= 0 || document.querySelector('script[src$=".tsx"]')
+            ? 'This page is the un-built source code. Deploy the built app (npm run build → dist/), e.g. with the included GitHub Pages workflow.'
+            : 'The app did not load. Check the browser console for details.');
+        }, 6000);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

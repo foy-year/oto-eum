@@ -8,15 +8,19 @@
     "predev": "node scripts/copy-models.mjs",
     "dev": "vite",
     "prebuild": "node scripts/copy-models.mjs",
-    "build": "tsc && vite build",
+    "build": "tsc && tsc -p server && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc",
-    "test:e2e": "node scripts/copy-models.mjs && node tests/e2e/run.mjs && node tests/e2e/ui.mjs"
+    "typecheck": "tsc && tsc -p server",
+    "test:e2e": "node scripts/copy-models.mjs && vite build && node tests/e2e/run.mjs && node tests/e2e/ui.mjs && node tests/e2e/cloud.mjs",
+    "server": "NODE_NO_WARNINGS=1 node --watch server/index.ts",
+    "start": "NODE_NO_WARNINGS=1 STATIC_DIR=dist node server/index.ts"
   },
   "dependencies": {
+    "@hono/node-server": "^2.1.6",
     "@spotify/basic-pitch": "^1.0.1",
     "@tonejs/midi": "^2.0.28",
+    "hono": "^4.13.16",
     "idb-keyval": "^6.3.0",
     "mediabunny": "^1.65.2",
     "react": "^19.3.1",
@@ -24,11 +28,15 @@
     "zustand": "^5.1.0"
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^4.7.0",
     "typescript": "5.8",
     "vite": "^6.4.5",
     "vitest": "^3.2.7"
+  },
+  "engines": {
+    "node": ">=22.18"
   }
 }

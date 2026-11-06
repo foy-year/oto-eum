@@ -1,0 +1,16 @@
+# docker compose up -d   →  http://localhost:8787  (put HTTPS in front, see README)
+services:
+  oto-eum:
+    build: .
+    restart: unless-stopped
+    ports: ["8787:8787"]
+    volumes: ["oto-data:/data"]
+    environment:
+      ADMIN_EMAILS: you@example.com          # these accounts become moderators
+      COPYRIGHT_CONTACT: copyright@example.com
+      CORS_ORIGINS: https://foy-year.github.io,http://localhost:5173
+      USER_QUOTA_MB: "2048"
+      MAX_UPLOAD_MB: "500"
+      ALLOW_SIGNUP: "true"
+volumes:
+  oto-data:

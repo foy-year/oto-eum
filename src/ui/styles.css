@@ -66,3 +66,6 @@ button.on { background: #2d4a7a; }
 .strip-ev.clip { background: rgba(120, 160, 255, .8); cursor: pointer; min-width: 3px; }
 .strip-ev.clip.sel { background: #ffcc4d; }
 progress { width: 200px; }
+.policy { white-space: pre-wrap; background: #11131a; padding: 8px; border-radius: 4px; max-height: 220px; overflow: auto; font-size: 12px; }
+textarea { font: inherit; color: inherit; background: #222838; border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; }
+.boot-error { padding: 24px; font: 14px/1.5 system-ui, sans-serif; color: #e4e8f1; background: #0d0f15; }

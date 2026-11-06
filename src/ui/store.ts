@@ -1,13 +1,43 @@
 import { create } from 'zustand';
 import { type MediaAsset, type Project, type NoteTrack, type Sample, type Effect, uid } from '../core/types';
 import { createProject } from '../core/project';
-import { IdbMediaStore, IdbProjectStore } from '../core/storage/mediaStore';
+import { IdbMediaStore, IdbProjectStore, type MediaStore, type ProjectStore } from '../core/storage/mediaStore';
+import { ApiClient, ConflictError, RemoteMediaStore, RemoteProjectStore, type CloudUser } from '../core/storage/remote';
 import { assetFromProbe, decodeAudio, probeMedia } from '../core/audio/decode';
 import { type Pcm, durationOf } from '../core/audio/pcm';
 import { encodeWav } from '../core/audio/wav';
 
-export const media = new IdbMediaStore();
-export const projects = new IdbProjectStore();
+const localMedia = new IdbMediaStore();
+const localProjects = new IdbProjectStore();
+let mediaImpl: MediaStore = localMedia;
+let projectImpl: ProjectStore = localProjects;
+let api: ApiClient | null = null;
+
+/** The active stores: local IndexedDB, or the oto-eum server when signed in. */
+export const media: MediaStore = {
+  list: () => mediaImpl.list(),
+  put: (a, b) => mediaImpl.put(a, b),
+  getBlob: (id) => mediaImpl.getBlob(id),
+  getMeta: (id) => mediaImpl.getMeta(id),
+  remove: (id) => mediaImpl.remove(id),
+};
+export const projects: ProjectStore = {
+  list: () => projectImpl.list(),
+  load: (id) => projectImpl.load(id),
+  save: (p, force) => projectImpl.save(p, force),
+  remove: (id) => projectImpl.remove(id),
+};
+export const cloudApi = () => api;
+
+const CLOUD_KEY = 'oto-eum:cloud';
+const DEFAULT_API = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
+export function savedCloud(): { url: string; token?: string } {
+  try {
+    return JSON.parse(localStorage.getItem(CLOUD_KEY) ?? 'null') ?? { url: DEFAULT_API };
+  } catch {
+    return { url: DEFAULT_API };
+  }
+}
 
 // Decoded audio cache (not in React state: large typed arrays).
 const pcmCache = new Map<string, Promise<Pcm>>();
@@ -21,7 +51,7 @@ export function loadPcm(id: string): Promise<Pcm> {
   return p;
 }
 
-export type Tab = 'library' | 'sound' | 'extract' | 'midi' | 'apply' | 'fx' | 'sync' | 'video';
+export type Tab = 'library' | 'sound' | 'extract' | 'midi' | 'apply' | 'fx' | 'sync' | 'video' | 'cloud';
 
 interface State {
   project: Project;
@@ -50,6 +80,17 @@ interface State {
   setEffects(target: EffectTarget, fx: Effect[]): void;
   newProject(): void;
   loadProject(id: string): Promise<void>;
+  /** Cloud mode (null = local-only). */
+  cloud: { url: string; user: CloudUser } | null;
+  readOnly: boolean;
+  conflict?: string;
+  connectCloud(client: ApiClient, user: CloudUser): Promise<void>;
+  disconnectCloud(): Promise<void>;
+  refreshUser(): Promise<void>;
+  refreshAssets(): Promise<void>;
+  saveNow(force?: boolean): Promise<void>;
+  reloadProject(): Promise<void>;
+  migrateLocalToCloud(onProgress?: (msg: string) => void): Promise<number>;
 }
 
 export type EffectTarget = { kind: 'master' } | { kind: 'track'; id: string } | { kind: 'sample'; id: string };
@@ -66,7 +107,21 @@ export const useStore = create<State>((set, get) => ({
   setBusy: (busy) => set({ busy }),
   setError: (error) => set({ error }),
 
+  cloud: null,
+  readOnly: false,
+
   async init() {
+    const saved = savedCloud();
+    if (saved.url && saved.token) {
+      const client = new ApiClient(saved.url, saved.token);
+      try {
+        const user = await client.me();
+        await get().connectCloud(client, user);
+        return;
+      } catch {
+        // expired session or server down → fall back to local mode
+      }
+    }
     const assets = await media.list();
     let project: Project | undefined;
     try {
@@ -78,6 +133,97 @@ export const useStore = create<State>((set, get) => ({
     set({ assets, ...(project ? { project } : {}) });
   },
 
+  async connectCloud(client, user) {
+    api = client;
+    mediaImpl = new RemoteMediaStore(client);
+    projectImpl = new RemoteProjectStore(client);
+    pcmCache.clear();
+    try {
+      localStorage.setItem(CLOUD_KEY, JSON.stringify({ url: client.base, token: client.token }));
+    } catch {
+      /* ignore */
+    }
+    set({ cloud: { url: client.base, user }, conflict: undefined });
+    await get().refreshAssets();
+    // reopen the last cloud project, if any
+    try {
+      const last = localStorage.getItem(LAST_KEY + ':cloud');
+      if (last) await get().loadProject(last);
+    } catch {
+      /* not found / no access */
+    }
+  },
+
+  async disconnectCloud() {
+    await api?.logout();
+    api = null;
+    mediaImpl = localMedia;
+    projectImpl = localProjects;
+    pcmCache.clear();
+    try {
+      localStorage.setItem(CLOUD_KEY, JSON.stringify({ url: savedCloud().url }));
+    } catch {
+      /* ignore */
+    }
+    set({ cloud: null, readOnly: false, conflict: undefined, assets: await localMedia.list() });
+  },
+
+  async refreshUser() {
+    if (!api) return;
+    const user = await api.me();
+    set((s) => ({ cloud: s.cloud ? { ...s.cloud, user } : s.cloud }));
+  },
+
+  async refreshAssets() {
+    set({ assets: await media.list() });
+  },
+
+  async saveNow(force = false) {
+    const p = get().project;
+    if (get().readOnly) return;
+    try {
+      const id = await projects.save(p, force);
+      if (typeof id === 'string' && id !== p.id) set((s) => ({ project: { ...s.project, id } }));
+      set({ conflict: undefined });
+      try {
+        localStorage.setItem(get().cloud ? LAST_KEY + ':cloud' : LAST_KEY, typeof id === 'string' ? id : p.id);
+      } catch {
+        /* ignore */
+      }
+    } catch (e) {
+      if (e instanceof ConflictError) {
+        const d = e.data as { updatedBy?: string };
+        set({ conflict: `${e.message}${d.updatedBy ? ` (last saved by ${d.updatedBy})` : ''}.` });
+      } else set({ error: `Saving failed: ${(e as Error).message}` });
+    }
+  },
+
+  async reloadProject() {
+    await get().loadProject(get().project.id);
+    set({ conflict: undefined });
+  },
+
+  async migrateLocalToCloud(onProgress) {
+    if (!api) throw new Error('Sign in first');
+    const local = await localMedia.list();
+    const idMap = new Map<string, string>();
+    for (const [i, a] of local.entries()) {
+      onProgress?.(`Uploading ${a.name} (${i + 1}/${local.length})…`);
+      const stored = await media.put(a, await localMedia.getBlob(a.id));
+      idMap.set(a.id, stored.id);
+    }
+    const remap = (id?: string) => (id && idMap.get(id)) || id;
+    get().update((p) => {
+      p.samples = p.samples.map((s) => ({ ...s, sourceId: remap(s.sourceId)! }));
+      p.videoClips = p.videoClips.map((c) => ({ ...c, sourceId: remap(c.sourceId)! }));
+      p.backingAudioId = remap(p.backingAudioId);
+    });
+    await get().saveNow();
+    await get().refreshAssets();
+    await get().refreshUser();
+    return local.length;
+  },
+
   async upload(files) {
     const list = Array.from(files);
     for (const file of list) {
@@ -86,8 +232,8 @@ export const useStore = create<State>((set, get) => ({
         const probe = await probeMedia(file);
         const asset = assetFromProbe(uid('m'), file, file.name, probe);
         if (!probe.hasAudio && probe.kind === 'video') asset.name += ' (no audio)';
-        await media.put(asset, file);
-        set((s) => ({ assets: [...s.assets, asset], selectedAssetId: asset.id }));
+        const stored = await media.put(asset, file);
+        set((s) => ({ assets: [...s.assets.filter((a) => a.id !== stored.id), stored], selectedAssetId: stored.id }));
       } catch (e) {
         set({ error: `${file.name}: ${(e as Error).message}` });
       }
@@ -98,10 +244,10 @@ export const useStore = create<State>((set, get) => ({
   async addPcmAsset(name, pcm) {
     const blob = new Blob([encodeWav(pcm) as Uint8Array<ArrayBuffer>], { type: 'audio/wav' });
     const asset: MediaAsset = { id: uid('m'), name, kind: 'audio', mime: 'audio/wav', size: blob.size, duration: durationOf(pcm), createdAt: Date.now() };
-    await media.put(asset, blob);
-    pcmCache.set(asset.id, Promise.resolve(pcm));
-    set((s) => ({ assets: [...s.assets, asset] }));
-    return asset;
+    const stored = await media.put(asset, blob);
+    pcmCache.set(stored.id, Promise.resolve(pcm));
+    set((s) => ({ assets: [...s.assets.filter((a) => a.id !== stored.id), stored] }));
+    return stored;
   },
 
   async removeAsset(id) {
@@ -115,14 +261,9 @@ export const useStore = create<State>((set, get) => ({
     const next = fn(draft) ?? draft;
     set({ project: next });
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      projects.save(get().project).catch(() => {});
-      try {
-        localStorage.setItem(LAST_KEY, get().project.id);
-      } catch {
-        /* ignore */
-      }
-    }, 400);
+    // while a conflict is unresolved, don't keep hammering the server
+    if (get().conflict) return;
+    saveTimer = setTimeout(() => void get().saveNow(), get().cloud ? 1500 : 400);
   },
   updateTrack: (id, patch) => get().update((p) => void (p.tracks = p.tracks.map((t) => (t.id === id ? { ...t, ...patch } : t)))),
   updateSample: (id, patch) => get().update((p) => void (p.samples = p.samples.map((s) => (s.id === id ? { ...s, ...patch } : s)))),
@@ -152,7 +293,14 @@ export const useStore = create<State>((set, get) => ({
   },
   async loadProject(id) {
     const p = await projects.load(id);
-    if (p) set({ project: p });
+    if (!p) return;
+    const role = projectImpl instanceof RemoteProjectStore ? projectImpl.roles.get(id) : 'owner';
+    set({ project: p, readOnly: role === 'viewer', conflict: undefined });
+    try {
+      localStorage.setItem(get().cloud ? LAST_KEY + ':cloud' : LAST_KEY, id);
+    } catch {
+      /* ignore */
+    }
   },
 }));
 
