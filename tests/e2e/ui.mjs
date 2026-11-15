@@ -69,8 +69,23 @@ try {
   await page.getByRole('button', { name: 'Auto-level tracks' }).click();
   await idle();
   await page.locator('label:has-text("Master loudness") select').selectOption('-14');
+  // #11 the render runs in the DSP worker: the page keeps animating meanwhile
+  await page.evaluate(() => {
+    const g = globalThis;
+    g.__frames = 0;
+    g.__t0 = performance.now();
+    const tick = () => {
+      g.__frames++;
+      if (document.querySelector('.busy') || performance.now() - g.__t0 < 300) requestAnimationFrame(tick);
+      else g.__t1 = performance.now();
+    };
+    requestAnimationFrame(tick);
+  });
   await page.getByRole('button', { name: /Render & play/ }).click();
   await idle();
+  const resp = await page.evaluate(() => ({ mode: globalThis.__otoDspMode, fps: (globalThis.__frames * 1000) / ((globalThis.__t1 ?? performance.now()) - globalThis.__t0) }));
+  console.log(`dsp mode: ${resp.mode}, UI frame rate during render: ${resp.fps.toFixed(0)} fps`);
+  if (resp.mode !== 'worker') throw new Error('DSP did not run in the worker');
   const mixLabel = await page.locator('.hint', { hasText: /^Mix: / }).first().innerText();
   console.log('mix:', mixLabel);
   const m = /(-?[\d.−-]+) LUFS/.exec(mixLabel.replace('−', '-'));

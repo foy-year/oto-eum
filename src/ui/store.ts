@@ -253,6 +253,7 @@ export const useStore = create<State>((set, get) => ({
   async removeAsset(id) {
     await media.remove(id);
     pcmCache.delete(id);
+    void import('./dsp').then((m) => m.dropSource(id));
     set((s) => ({ assets: s.assets.filter((a) => a.id !== id), selectedAssetId: s.selectedAssetId === id ? undefined : s.selectedAssetId }));
   },
 

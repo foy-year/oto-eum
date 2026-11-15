@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { job, loadPcm, useStore } from '../store';
+import { job, useStore } from '../store';
+import { dsp } from '../dsp';
 import { Pick, Row, Section } from '../widgets';
-import { checkProject, type ProjectCheck } from '../../core/render/check';
+import type { ProjectCheck } from '../../core/render/check';
 
 const pct = (v: number | null | undefined) => (v == null || Number.isNaN(v) ? '—' : `${Math.round(v * 100)}%`);
 const db = (v: number) => (Number.isFinite(v) ? v.toFixed(1) : '−∞');
@@ -14,9 +15,8 @@ export function SelfCheck() {
   const run = () =>
     job('Checking the render…', async () => {
       const p = useStore.getState().project;
-      const reference = refId ? await loadPcm(refId) : undefined;
       // compare the parts we made, without the backing track itself
-      setRes(await checkProject({ ...p, backingAudioId: refId === p.backingAudioId ? undefined : p.backingAudioId }, loadPcm, { reference }));
+      setRes(await dsp('check', { project: { ...p, backingAudioId: refId === p.backingAudioId ? undefined : p.backingAudioId }, referenceId: refId }));
     });
   return (
     <Section title="Self-check" actions={<button className="primary" onClick={run} disabled={!project.tracks.some((t) => t.sampleId)}>Run checks</button>}>

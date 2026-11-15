@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { job, media, useStore } from '../store';
 import { Row, Section, fmt } from '../widgets';
 import { type Pcm, slice } from '../../core/audio/pcm';
-import { findSyllables, type SyllableCandidate } from '../../core/analysis/sampleFinder';
+import type { SyllableCandidate } from '../../core/analysis/sampleFinder';
+import { dsp } from '../dsp';
 import { midiToName } from '../../core/analysis/pitch';
 import { createSample } from '../../core/project';
 import { prepareSample, renderTrack } from '../../core/render/sampler';
@@ -50,8 +51,7 @@ export function SampleFinder({ asset, pcm, onRegions }: { asset: MediaAsset; pcm
   const run = () =>
     job('Looking for pitched syllables…', async () => {
       if (!pcm) return;
-      await new Promise((r) => setTimeout(r, 30));
-      const c = findSyllables(pcm, { limit: 24 });
+      const c = await dsp('findSyllables', { sourceId: asset.id, opts: { limit: 24 } });
       setFound(c);
       onRegions(c.map((x) => ({ start: x.start, end: x.end })));
       setPics(asset.kind === 'video' ? await thumbs(asset, c.map((x) => (x.steadyStart + x.steadyEnd) / 2)) : []);

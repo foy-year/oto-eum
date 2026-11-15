@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { download, job, loadPcm, useStore } from '../store';
+import { download, job, useStore } from '../store';
 import { Check, Num, Pick, Row, Section } from '../widgets';
-import { autoLevel, mixProject } from '../../core/render/mix';
+import { dsp } from '../dsp';
 import type { LoudnessResult } from '../../core/render/loudness';
 import { exportAudio } from '../../core/video/export';
 import { SelfCheck } from './SelfCheck';
@@ -13,11 +13,11 @@ import { play, stop } from '../player';
 /** Shared render cache so the video panel can reuse the last mix. */
 export const lastMix: { pcm: Pcm | null; key: string; loudness?: LoudnessResult } = { pcm: null, key: '' };
 
-export async function renderMix(onProgress?: (f: number, l: string) => void): Promise<Pcm> {
+export async function renderMix(onProgress?: (f: number, l?: string) => void): Promise<Pcm> {
   const { project } = useStore.getState();
   const key = JSON.stringify([project.tracks, project.samples, project.masterEffects, project.backingAudioId, project.backingGain, project.sampleRate, project.masterLoudness, project.masterCeiling]);
   if (lastMix.pcm && lastMix.key === key) return lastMix.pcm;
-  const { master, loudness } = await mixProject(project, loadPcm, { onProgress });
+  const { master, loudness } = await dsp('mix', { project }, onProgress);
   lastMix.pcm = master;
   lastMix.key = key;
   lastMix.loudness = loudness;
@@ -104,7 +104,7 @@ export function SoundApplier() {
             title="Set every track's gain so all tracks are equally loud (plus their Level ±dB)"
             onClick={() =>
               job('Measuring track loudness…', async () => {
-                const res = await autoLevel(useStore.getState().project, loadPcm);
+                const res = await dsp('autoLevel', { project: useStore.getState().project });
                 update((p) => {
                   for (const t of p.tracks) if (res[t.id]) t.gain = Math.round(res[t.id].gain * 1000) / 1000;
                 });
@@ -132,7 +132,7 @@ export function SoundApplier() {
             className="primary"
             onClick={() =>
               job('Rendering mix…', async () => {
-                const pcm = await renderMix((f, l) => setLabel(`${l} ${(f * 100).toFixed(0)}%`));
+                const pcm = await renderMix((f, l) => setLabel(`${l ?? ''} ${(f * 100).toFixed(0)}%`));
                 setLabel(`Mix: ${durationOf(pcm).toFixed(2)} s · ${describeLoudness(lastMix.loudness)}`);
                 play(pcm);
               })

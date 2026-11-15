@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { useStore } from '../store';
+import { job, useStore } from '../store';
 import { Num, Pick, Row, Section, fmt } from '../widgets';
 import { type Pcm, slice } from '../../core/audio/pcm';
-import { DRUM_PATTERNS, drumPattern, findDrumHits, type DrumHit, type DrumKind } from '../../core/analysis/drums';
+import { DRUM_PATTERNS, drumPattern, type DrumHit, type DrumKind } from '../../core/analysis/drums';
+import { dsp } from '../dsp';
 import { createEffect } from '../../core/render/effects';
 import { createSample, createTrack } from '../../core/project';
 import { endTime } from '../../core/midi/midi';
@@ -54,7 +55,7 @@ export function DrumKit({ asset, pcm }: { asset: MediaAsset; pcm: Pcm | null }) 
   };
 
   return (
-    <Section title="Drum kit from this source" actions={<button disabled={!pcm} onClick={() => pcm && setHits(findDrumHits(pcm))}>Find drum sounds</button>}>
+    <Section title="Drum kit from this source" actions={<button disabled={!pcm} onClick={() => job('Looking for drum sounds…', async () => setHits(await dsp('findDrumHits', { sourceId: asset.id })))}>Find drum sounds</button>}>
       {!hits && <p className="hint">Finds kick-, snare- and hat-like hits (thumps, plosives, hiss) in this source and builds drum tracks from them on the project tempo.</p>}
       {hits && (
         <>
