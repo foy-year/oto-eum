@@ -41,10 +41,10 @@ export function Effector() {
       const t = project.tracks.find((x) => x.id === target.id)!;
       const s = project.samples.find((x) => x.id === t.sampleId);
       if (!s) throw new Error('Assign a sample to this track first (Sound Applier).');
-      return renderNoteTrack(t, s, await loadPcm(s.sourceId), { sampleRate: project.sampleRate });
+      return renderNoteTrack(t, s, await loadPcm(s.audioId ?? s.sourceId), { sampleRate: project.sampleRate });
     }
     const s = project.samples.find((x) => x.id === target.id)!;
-    return prepareSample(await loadPcm(s.sourceId), s);
+    return prepareSample(await loadPcm(s.audioId ?? s.sourceId), s);
   };
 
   return (

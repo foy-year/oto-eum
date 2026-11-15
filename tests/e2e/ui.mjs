@@ -47,6 +47,14 @@ try {
   console.log('sample finder candidates:', cands);
   if (!cands) throw new Error('sample finder found nothing');
   await page.locator('.cand').first().getByRole('button', { name: '+ loop' }).click();
+  // #12 built-in voice separation → stems linked to the video → samples take their sound from the vocals
+  await page.getByRole('button', { name: /^Separate colors/ }).click();
+  await idle();
+  await page.waitForSelector('text=/Stems: vocals, accompaniment/');
+  await page.getByRole('button', { name: /Use vocals for this source/ }).click();
+  console.log('separation:', await page.locator('text=/Built-in separation done/').first().innerText());
+  const iso = await page.evaluate(() => crossOriginIsolated);
+  console.log('crossOriginIsolated:', iso);
   await shot('2-sound-editor');
   // 3 MIDI extractor: mono on the melody
   await tab('MIDI Extractor');

@@ -19,6 +19,10 @@ import type { Note, NoteTrack, Sample, VideoClip } from '../../src/core/types';
 
 const W = process.argv[2];
 const src = decodeWav(readFileSync(`${W}/a48.wav`));
+// optional: voices from a separated vocals stem (e.g. Demucs), picture still from the video
+const USE_VOCALS = process.argv.includes('--vocals');
+const vocals = USE_VOCALS ? decodeWav(readFileSync(`${W}/a_vocals48.wav`)) : null;
+const load = async (id: string) => (id === 'ad-vocals' && vocals ? vocals : src);
 const roll: NoteTrack[] = JSON.parse(readFileSync(`${W}/roll.json`, 'utf8'));
 const byName = (k: string) => roll.find((t) => t.name.includes(k))!;
 
@@ -49,12 +53,12 @@ const tidy = (notes: Note[]) =>
 // ---------------------------------------------------------------------------
 // 2. Samples (regions of the ad: sound AND picture)
 // ---------------------------------------------------------------------------
-function rootOf(a: number, b: number, fallback: number) {
-  const r = detectRootPitch(slice(src, a, b), { minHz: 60, maxHz: 1000, threshold: 0.25 });
+function rootOf(a: number, b: number, fallback: number, from: Pcm = src) {
+  const r = detectRootPitch(slice(from, a, b), { minHz: 60, maxHz: 1000, threshold: 0.25 });
   return r && r.confidence > 0.5 ? r.midi : fallback;
 }
 function sampleAt(name: string, a: number, b: number, fallbackRoot: number, extra: Partial<Sample> = {}): Sample {
-  const m = rootOf(a, b, fallbackRoot);
+  const m = rootOf(a, b, fallbackRoot, extra.audioId === 'ad-vocals' && vocals ? vocals : src);
   const s = createSample('ad', a, b, { name, rootPitch: Math.round(m), rootCents: Math.round((m - Math.round(m)) * 100), effects: [createEffect('normalize', { peak: 0.9 })], ...extra });
   console.log(`sample ${name.padEnd(10)} ${a.toFixed(2)}–${b.toFixed(2)}  root ${midiToName(m)} (${m.toFixed(2)})`);
   return s;
@@ -62,17 +66,17 @@ function sampleAt(name: string, a: number, b: number, fallbackRoot: number, extr
 
 const S = {
   // family video-call shot: stable vowel → looped so held notes sing
-  main: sampleAt('family', 11.35, 11.445, 55, { sustain: 'loop', release: 0.05, fadeIn: 0.004, fadeOut: 0.004 }),
+  main: sampleAt('family', 11.35, 11.445, 55, { sustain: 'loop', release: 0.05, fadeIn: 0.004, fadeOut: 0.004 , ...(vocals ? { audioId: 'ad-vocals' } : {}) }),
   // girl-in-bed scene, voice-over syllable
-  harmony: sampleAt('bedroom', 4.35, 4.5, 52, { sustain: 'cut', release: 0.04 }),
+  harmony: sampleAt('bedroom', 4.35, 4.5, 52, { sustain: 'cut', release: 0.04 , ...(vocals ? { audioId: 'ad-vocals' } : {}) }),
   // "life — так легко" logo card voice-over vowel, looped for the sustained chords
-  chorus: sampleAt('logo-card', 10.42, 10.555, 44, { sustain: 'loop', release: 0.08, fadeIn: 0.006, fadeOut: 0.006 }),
+  chorus: sampleAt('logo-card', 10.42, 10.555, 44, { sustain: 'loop', release: 0.08, fadeIn: 0.006, fadeOut: 0.006 , ...(vocals ? { audioId: 'ad-vocals' } : {}) }),
   // the ad's intro music: a clean low D
   bass: sampleAt('intro', 0.45, 0.64, 38, { sustain: 'cut', release: 0.03 }),
   // the sung/synth "life:)" jingle tone on the end card
   arp: sampleAt('jingle', 22.75, 22.98, 78, { sustain: 'cut', release: 0.03 }),
   // sofa scene voice-over, pitched way up for the crazy-pitch track
-  wild: sampleAt('sofa', 20.0, 20.095, 45, { sustain: 'loop', release: 0.03 }),
+  wild: sampleAt('sofa', 20.0, 20.095, 45, { sustain: 'loop', release: 0.03 , ...(vocals ? { audioId: 'ad-vocals' } : {}) }),
 };
 // the intro region also contains the ad's pad chords: keep only the bass partials before pitching
 S.bass.effects = [createEffect('lowpass', { freq: 280, q: 0.7 }), createEffect('lowpass', { freq: 280, q: 0.7 }), createEffect('normalize', { peak: 0.9 })];
@@ -180,7 +184,7 @@ project.texts[1].end = outroStart + (OUTRO.b - OUTRO.a) + 0.3;
 // auto-level (core): every track to −20 LUFS + its offset; master normalised to −14 LUFS
 const OFFSET: Record<string, number> = { 'Main (family)': 3, 'Harmony (bedroom)': -3, 'Wild (sofa)': 0, 'Bass (intro)': 0, 'Chorus (logo card)': -5, 'Arpeggio (jingle)': -3, Kick: 1, Snare: -2, Hat: -8, 'Outro (end card)': 2 };
 for (const t of project.tracks) t.levelOffset = OFFSET[t.name] ?? 0;
-const lv = await autoLevel(project, async () => src);
+const lv = await autoLevel(project, load);
 for (const t of project.tracks) if (lv[t.id]) t.gain = lv[t.id].gain;
 project.masterEffects = [createEffect('compressor', { threshold: -14, ratio: 3, attack: 0.003, release: 0.12, makeup: 2 })];
 project.masterLoudness = -14;
@@ -193,7 +197,13 @@ const activeRms = (p: Pcm) => {
   const on = vals.filter((v) => v > 0.005);
   return on.length ? Math.sqrt(on.reduce((s, v) => s + v * v, 0) / on.length) : 0;
 };
-const { master, stems, loudness } = await mixProject(project, async () => src);
+const { master, stems, loudness } = await mixProject(project, load);
+{
+  const { checkProject } = await import('../../src/core/render/check');
+  const rep = await checkProject(project, load);
+  for (const t of rep.tracks)
+    if (t.pitch) console.log(`self-check ${t.name.padEnd(20)} MIDI match ${Math.round((t.midiMatch ?? 0) * 100)}%  tuning ${t.pitch.checked ? Math.round(t.pitch.medianError * 100) + '¢' : '—'} ${t.issues.join('; ')}`);
+}
 console.log(`master ${loudness.integrated.toFixed(1)} LUFS, true peak ${loudness.truePeak.toFixed(1)} dBTP`);
 for (const t of project.tracks) {
   const st = stems[t.id];

@@ -10,6 +10,7 @@ import type { Sample } from '../../core/types';
 import { play, stop } from '../player';
 import { SampleFinder } from './SampleFinder';
 import { DrumKit } from './DrumKit';
+import { SeparateVoice } from './SeparateVoice';
 import { analyzeF0, flattenPitch } from '../../core/render/psola';
 
 /** Pitch over the sample: grey = original, green = after flattening; dashed = root note. */
@@ -108,9 +109,10 @@ export function SoundEditor() {
     addSample(s);
   };
 
-  const audition = (s: Sample, pitch?: number) => {
+  const audition = async (s: Sample, pitch?: number) => {
     if (!pcm) return;
-    const clip = prepareSample(pcm, s, pcm.sampleRate);
+    const src = s.audioId ? await loadPcm(s.audioId) : pcm;
+    const clip = prepareSample(src, s, pcm.sampleRate);
     if (pitch == null) return play(clip);
     const len = (s.end - s.start) * 1.5;
     play(renderTrack([{ id: 'a', pitch, start: 0, duration: len, velocity: 1 }], clip, s, { sampleRate: pcm.sampleRate }));
@@ -162,6 +164,7 @@ export function SoundEditor() {
         </Row>
       </Section>
 
+      <SeparateVoice asset={asset} />
       <SampleFinder asset={asset} pcm={pcm} onRegions={setFinds} />
       <DrumKit asset={asset} pcm={pcm} />
 
@@ -244,6 +247,14 @@ export function SoundEditor() {
             <Num label="Fade out" value={current.fadeOut} step={0.001} unit="s" onChange={(v) => updateSample(current.id, { fadeOut: v })} />
             <Num label="Release" value={current.release ?? 0.03} step={0.005} unit="s" onChange={(v) => updateSample(current.id, { release: v })} />
             <Check label="Reverse" value={current.reverse} onChange={(v) => updateSample(current.id, { reverse: v })} />
+            {assets.some((a) => a.derivedFrom === current.sourceId) && (
+              <Pick
+                label="Sound from"
+                value={current.audioId ?? ''}
+                options={[{ value: '', label: 'original' }, ...assets.filter((a) => a.derivedFrom === current.sourceId).map((a) => ({ value: a.id, label: `${a.stem ?? a.name} stem` }))]}
+                onChange={(v) => updateSample(current.id, { audioId: v || undefined })}
+              />
+            )}
           </Row>
           <Row>
             <button onClick={() => audition(current)}>▶ Audition</button>
@@ -253,7 +264,7 @@ export function SoundEditor() {
               onClick={() =>
                 job('Bouncing…', async () => {
                   if (!pcm) return;
-                  await addPcmAsset(`${current.name} (bounced).wav`, prepareSample(pcm, current, pcm.sampleRate));
+                  await addPcmAsset(`${current.name} (bounced).wav`, prepareSample(current.audioId ? await loadPcm(current.audioId) : pcm, current, pcm.sampleRate));
                 })
               }
             >

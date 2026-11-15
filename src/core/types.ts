@@ -21,6 +21,10 @@ export interface MediaAsset {
   /** Detected/declared video frame rate, used to quantise frame lookups. */
   fps?: number;
   createdAt: number;
+  /** For separated stems: the asset this was separated from (same timeline). */
+  derivedFrom?: Id;
+  /** Stem name ('vocals', 'accompaniment', 'drums', 'bass', 'other'). */
+  stem?: string;
   /** Cloud mode only. */
   visibility?: 'private' | 'unlisted' | 'public';
   ownerId?: string;
@@ -93,6 +97,8 @@ export interface Sample {
   effects?: Effect[];
   /** Pitch flattening ("tuning") strength 0..1 applied to the clip first. */
   flatten?: number;
+  /** Take the sound from this asset instead (e.g. a separated vocals stem); the picture still comes from sourceId. */
+  audioId?: Id;
 }
 
 export type EffectType =

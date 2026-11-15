@@ -8,6 +8,7 @@ import { mixProject, autoLevel } from '../core/render/mix';
 import { checkProject } from '../core/render/check';
 import { findSyllables, type FinderOptions } from '../core/analysis/sampleFinder';
 import { findDrumHits } from '../core/analysis/drums';
+import { separateVoice } from '../core/analysis/separate';
 
 export interface OpContext {
   source(id: string): Pcm;
@@ -33,6 +34,9 @@ export const OPS = {
   async findDrumHits(a: { sourceId: string }, ctx: OpContext) {
     return findDrumHits(ctx.source(a.sourceId));
   },
+  async separateVoice(a: { sourceId: string; strength?: number }, ctx: OpContext) {
+    return separateVoice(ctx.source(a.sourceId), { strength: a.strength, onProgress: (f) => ctx.progress(f) });
+  },
 };
 
 export type OpName = keyof typeof OPS;
@@ -46,7 +50,7 @@ export function sourcesFor(_op: OpName, args: Record<string, unknown>): string[]
   if (p) {
     for (const t of p.tracks) {
       const s = p.samples.find((x) => x.id === t.sampleId);
-      if (s && !t.muted) ids.add(s.sourceId);
+      if (s && !t.muted) ids.add(s.audioId ?? s.sourceId);
     }
     if (p.backingAudioId) ids.add(p.backingAudioId);
   }

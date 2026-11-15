@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS media (
   visibility TEXT NOT NULL DEFAULT 'private',
   status TEXT NOT NULL DEFAULT 'active',
   removed_reason TEXT,
+  derived_from TEXT,
+  stem TEXT,
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS media_owner ON media(owner_id);
@@ -109,6 +111,14 @@ export function openDb(dataDir: string | ':memory:'): DB {
   }
   const db = new DatabaseSync(path);
   db.exec(SCHEMA);
+  // migrations for databases created by older versions
+  for (const col of ['derived_from TEXT', 'stem TEXT']) {
+    try {
+      db.exec(`ALTER TABLE media ADD COLUMN ${col}`);
+    } catch {
+      /* already there */
+    }
+  }
   return db;
 }
 

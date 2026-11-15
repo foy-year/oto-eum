@@ -23,6 +23,7 @@
     "hono": "^4.13.16",
     "idb-keyval": "^6.3.0",
     "mediabunny": "^1.65.2",
+    "onnxruntime-web": "^1.23.2",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "zustand": "^5.1.0"

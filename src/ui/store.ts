@@ -6,6 +6,7 @@ import { ApiClient, ConflictError, RemoteMediaStore, RemoteProjectStore, type Cl
 import { assetFromProbe, decodeAudio, probeMedia } from '../core/audio/decode';
 import { type Pcm, durationOf } from '../core/audio/pcm';
 import { encodeWav } from '../core/audio/wav';
+import { dropSource } from './dsp';
 
 const localMedia = new IdbMediaStore();
 const localProjects = new IdbProjectStore();
@@ -68,7 +69,7 @@ interface State {
   setError(msg?: string): void;
   init(): Promise<void>;
   upload(files: FileList | File[]): Promise<void>;
-  addPcmAsset(name: string, pcm: Pcm): Promise<MediaAsset>;
+  addPcmAsset(name: string, pcm: Pcm, extra?: Partial<MediaAsset>): Promise<MediaAsset>;
   removeAsset(id: string): Promise<void>;
   update(fn: (p: Project) => Project | void): void;
   updateTrack(id: string, patch: Partial<NoteTrack>): void;
@@ -241,9 +242,9 @@ export const useStore = create<State>((set, get) => ({
     set({ busy: undefined });
   },
 
-  async addPcmAsset(name, pcm) {
+  async addPcmAsset(name, pcm, extra = {}) {
     const blob = new Blob([encodeWav(pcm) as Uint8Array<ArrayBuffer>], { type: 'audio/wav' });
-    const asset: MediaAsset = { id: uid('m'), name, kind: 'audio', mime: 'audio/wav', size: blob.size, duration: durationOf(pcm), createdAt: Date.now() };
+    const asset: MediaAsset = { id: uid('m'), name, kind: 'audio', mime: 'audio/wav', size: blob.size, duration: durationOf(pcm), createdAt: Date.now(), ...extra };
     const stored = await media.put(asset, blob);
     pcmCache.set(stored.id, Promise.resolve(pcm));
     set((s) => ({ assets: [...s.assets.filter((a) => a.id !== stored.id), stored] }));
@@ -253,7 +254,7 @@ export const useStore = create<State>((set, get) => ({
   async removeAsset(id) {
     await media.remove(id);
     pcmCache.delete(id);
-    void import('./dsp').then((m) => m.dropSource(id));
+    dropSource(id);
     set((s) => ({ assets: s.assets.filter((a) => a.id !== id), selectedAssetId: s.selectedAssetId === id ? undefined : s.selectedAssetId }));
   },
 

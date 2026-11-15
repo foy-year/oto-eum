@@ -9,3 +9,4 @@ const dest = join(process.cwd(), 'public', 'models', 'basic-pitch');
 if (!existsSync(dest)) mkdirSync(dest, { recursive: true });
 cpSync(join(pkg, 'model'), dest, { recursive: true });
 console.log('Basic Pitch model copied to', dest);
+

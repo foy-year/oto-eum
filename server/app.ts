@@ -39,6 +39,8 @@ interface MediaRow {
   visibility: Visibility;
   status: 'active' | 'removed';
   removed_reason: string | null;
+  derived_from: string | null;
+  stem: string | null;
   created_at: number;
 }
 
@@ -62,6 +64,8 @@ function mediaJson(m: MediaRow, owner?: { name: string }) {
     status: m.status,
     ownerId: m.owner_id,
     ownerName: owner?.name,
+    derivedFrom: m.derived_from ?? undefined,
+    stem: m.stem ?? undefined,
   };
 }
 
@@ -200,7 +204,7 @@ export function createApp({ config, db, storage }: AppDeps) {
   app.post('/api/media', async (c) => {
     const user = requireUser(c);
     if (!uploadLimiter.allow(user.id)) fail(429, 'Too many uploads, slow down');
-    let meta: { name?: string; kind?: string; duration?: number; width?: number; height?: number; fps?: number; visibility?: string } = {};
+    let meta: { name?: string; kind?: string; duration?: number; width?: number; height?: number; fps?: number; visibility?: string; derivedFrom?: string; stem?: string } = {};
     try {
       meta = JSON.parse(decodeURIComponent(c.req.header('x-oto-meta') ?? '{}'));
     } catch {
@@ -233,9 +237,12 @@ export function createApp({ config, db, storage }: AppDeps) {
     const vis: Visibility = VIS.includes(meta.visibility as Visibility) ? (meta.visibility as Visibility) : 'private';
     const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
     db.prepare(
-      `INSERT INTO media (id, owner_id, name, kind, mime, size, duration, width, height, fps, sha256, visibility, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, user.id, String(meta.name ?? 'upload').slice(0, 200), kind, mime, stored.size, n(meta.duration) ?? 0, n(meta.width), n(meta.height), n(meta.fps), stored.sha256, vis, Date.now());
+      `INSERT INTO media (id, owner_id, name, kind, mime, size, duration, width, height, fps, sha256, visibility, derived_from, stem, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id, user.id, String(meta.name ?? 'upload').slice(0, 200), kind, mime, stored.size, n(meta.duration) ?? 0, n(meta.width), n(meta.height), n(meta.fps), stored.sha256, vis,
+      typeof meta.derivedFrom === 'string' ? meta.derivedFrom.slice(0, 64) : null, typeof meta.stem === 'string' ? meta.stem.slice(0, 32) : null, Date.now(),
+    );
     audit(db, user.id, 'media.upload', id, { size: stored.size, sha256: stored.sha256 });
     return c.json(mediaJson(getMedia(id)!), 201);
   });

@@ -29,13 +29,13 @@ Requires Node ≥ 22.18 (the server runs TypeScript directly and uses the built-
 | # | Tool | What it does |
 |---|------|--------------|
 | 1 | **Library** | Upload audio/video (mp3, wav, ogg, flac, m4a, mp4, webm, mov, mkv…). Probes duration, resolution, fps. Mark a file as backing audio. |
-| 2 | **Sound Editor** | Waveform with region selection → create *samples* (non-destructive regions). **Sample finder**: ranks pitched syllables in a source (thumbnail, root note, steadiness) → one-click one-shot or vowel loop. Auto root detection, onset detection + auto-slicing, reverse, fades, gain. **Tuning**: flatten pitch 50/100 % (PSOLA) with a pitch-curve view. Pitch modes: `resample` (classic 音MAD: faster = higher), `natural` (PSOLA: keeps speed and formants — voices stay voices), `fixed`. Sustain `cut` / one-shot / `loop`, audition at any note, bounce to a new file. |
+| 2 | **Sound Editor** | Waveform with region selection → create *samples* (non-destructive regions). **Sample finder**: ranks pitched syllables in a source (thumbnail, root note, steadiness) → one-click one-shot or vowel loop. Auto root detection, onset detection + auto-slicing, reverse, fades, gain. **Tuning**: flatten pitch 50/100 % (PSOLA) with a pitch-curve view. Pitch modes: `resample` (classic 音MAD: faster = higher), `natural` (PSOLA: keeps speed and formants — voices stay voices), `fixed`. Sustain `cut` / one-shot / `loop`, audition at any note, bounce to a new file. **Voice separation**: built-in (no download) or **Demucs** 4-stem neural (your own model file); samples can take their sound from a stem while the picture stays from the video. **Drum kit**: kick/snare/hat candidates from the source + pattern presets → drum tracks. |
 | 3 | **MIDI Extractor** | **Piano-roll (MIDI) video reader**: drag the note area, auto-detect the row grid + note names (from the black/white key shading) and one track per colour, read the whole video (page flips, playhead), verify pitch/octave against the video's audio, set the tempo. Audio/video → MIDI: **polyphonic** Spotify Basic Pitch (neural, in-browser), **monophonic** YIN (vocals, speech-melody, lead lines). Region-limited analysis, Hz limits, top-melody-only, split chords into voices, BPM estimation, `.mid` import. |
 | 4 | **MIDI Editor** | Piano roll: draw/move/resize/delete, multi-select, keyboard transpose, ghost notes of other tracks, grid/snap, zoom. Ops: quantize (full/50%), transpose, octave, legato, monophonize, merge repeats, velocity, split voices → tracks. **Detect tempo** (BPM + grid offset from the notes); grid and quantize follow it. Export `.mid` (one or all tracks). |
-| 5 | **Sound Applier** | Assign a sample to each MIDI track; gain/pan/mute; mix with backing audio. **Auto-level** (equal loudness + per-track ±dB), **master loudness** target (−14 LUFS etc., true-peak limiter), loudness/peak readout (ITU-R BS.1770). Export WAV or M4A (AAC; WebM/Opus where AAC is unavailable). |
+| 5 | **Sound Applier** | Assign a sample to each MIDI track; gain/pan/mute; mix with backing audio. **Auto-level** (equal loudness + per-track ±dB), **master loudness** target (−14 LUFS etc., true-peak limiter), loudness/peak readout (ITU-R BS.1770). Export WAV or M4A (AAC; WebM/Opus where AAC is unavailable). **Self-check**: per-track tuning (with one-click root fix), MIDI match, loudness, clipping; master; comparison with a reference song. |
 | 6 | **Sound Effector** | Effect chains on a **sample** (baked before pitching), a **track**, or the **master**: gain, pan, low/high/band-pass, EQ bell, shelves, distortion, bitcrusher, delay (ping-pong), reverb (Freeverb), chorus, compressor, tremolo, stutter, reverse, speed/pitch, normalize. Presets (telephone, lo-fi, chipmunk, stutter roll, hall…). |
-| 7 | **Video Synchronizer** | Every note of a track whose sample was cut from a video re-triggers that video region **at the same rate as the audio** (an octave up = 2× speed picture). Layouts: single / grid / columns / rows. Alternate L/R flip, hue-by-pitch, zoom punch, flash, hold-last-frame. **Scenes**: change the layout over time (grid / focus / columns / rows / single / custom drag-and-resize boxes), per-scene visible tracks and order. Real-time preview and frame-exact export to MP4 (H.264) or WebM (VP9) with audio. |
-| 8 | **Video Editor** | Manual clips on layers above the synced video: timing, in/out, speed, position/size, flip, reverse, invert, hue, opacity. **Beat-cut generator**: cuts a video on every onset of the mix (sequential / random / restart). |
+| 7 | **Video Synchronizer** | Every note of a track whose sample was cut from a video re-triggers that video region **at the same rate as the audio** (an octave up = 2× speed picture). Layouts: single / grid / columns / rows. Alternate L/R flip, hue-by-pitch, zoom punch, flash, hold-last-frame. **Scenes**: change the layout over time (grid / focus / columns / rows / single / custom drag-and-resize boxes), per-scene visible tracks and order. **Per-note effects**: flip modes, rotation, shake, zoom drift, greyscale held frames; **screen pulse** on chosen tracks (e.g. the kick). Real-time preview and frame-exact export to MP4 (H.264) or WebM (VP9) with audio. |
+| 8 | **Video Editor** | Manual clips on layers above the synced video: timing, in/out, speed, position/size, flip, reverse, invert, hue, opacity. **Beat-cut generator**: cuts a video on every onset of the mix (sequential / random / restart). **Text & titles**: captions, lyrics, title/credit cards (fade, pop, typewriter, slide). |
 | ☁ | **Cloud & Sharing** | Sign up / sign in, storage quota, move the local library to the cloud, per-file visibility (private / unlisted / public), share a project with collaborators (editor / viewer) with conflict detection, create and browse source packs, “save to my library”, report items. Admins get a moderation queue (take down / restore / dismiss). |
 
 ## Architecture
@@ -51,6 +51,9 @@ src/core/          UI-agnostic engine — pure TS, unit-tested in Node
   analysis/pianoRoll.ts  piano-roll video → notes (streaming scanner, grid/colour calibration)
   analysis/align.ts  notes ↔ audio: pitch/octave alignment, chroma agreement, pitch accuracy
   analysis/sampleFinder.ts  ranked pitched syllables (steady vowel + onset)
+  analysis/drums.ts  kick/snare/hat finder, drum pattern presets
+  analysis/separate.ts  built-in voice separation (centre × harmonic × f0-comb masks)
+  analysis/demucs.ts  HTDemucs runner (onnxruntime-web, WebGPU/WASM)
   midi/midi.ts       .mid I/O + editing ops (quantize, legato, voices…)
   midi/transcribe.ts Basic Pitch (lazy-loaded TF.js) / YIN transcription
   render/sampler.ts  Sound Applier: sample-accurate note rendering
@@ -58,8 +61,12 @@ src/core/          UI-agnostic engine — pure TS, unit-tested in Node
   render/mix.ts      project mixdown, auto-level
   render/psola.ts    TD-PSOLA: flatten pitch, formant-preserving shift
   render/loudness.ts BS.1770 loudness, true peak, limiter, normalisation
+  render/check.ts    self-check report (tuning, MIDI match, loudness, reference)
   video/timeline.ts  notes → VideoEvents (shares playbackRate() with the sampler ⇒ A/V lock), scenes
   video/frameStream.ts  RGBA frame access for analysis (WebCodecs)
+  video/text.ts      text overlays & title cards
+src/workers/       DSP worker (mix, auto-level, checks, finders, separation) + Demucs worker
+src/vendor/demucs/ MIT glue code from demucs-js (no weights)
   video/frames.ts    WebCodecs frame cache (batched sorted decode → ImageBitmap LRU)
   video/compositor.ts draws one frame (layout, flip, hue, punch, flash)
   video/export.ts    offline, frame-exact encode via Mediabunny (MP4/WebM)
@@ -120,6 +127,18 @@ or without Docker: `npm ci && npm run build && npm start`. Put HTTPS in front
 (e.g. Caddy: `api.example.com { reverse_proxy localhost:8787 }`) — an HTTPS site
 such as GitHub Pages cannot call a plain-HTTP API. Add the site's origin to
 `CORS_ORIGINS`. Back up `DATA_DIR` (database + files).
+
+### Neural separation & model licence
+
+The Demucs path runs Meta's HTDemucs with onnxruntime-web (WebGPU when the
+browser has a GPU adapter, otherwise multi-threaded WebAssembly when the page is
+cross-origin isolated — the dev server and `server/` send COOP/COEP headers for
+that; GitHub Pages cannot, so it runs single-threaded there). The weights are
+released for **personal/research use only**, so oto-eum does not ship them:
+users load an `htdemucs.onnx` themselves (e.g. from the `demucs` npm package);
+it is kept in their browser (IndexedDB). The built-in separator needs no model.
+Measured here (23 s ad, 4 CPU threads, no GPU): 41 s; vocals stem −53 dB in a
+music-only passage while keeping ~96 % of the speech level.
 
 ## Browser support
 

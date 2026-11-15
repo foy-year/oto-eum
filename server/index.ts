@@ -16,6 +16,14 @@ const app = createApp({ config, db, storage });
 if (config.staticDir && existsSync(config.staticDir)) {
   // single-origin deployment: API + built frontend
   const root = relative(process.cwd(), config.staticDir) || '.';
+  // cross-origin isolation for the app pages (multi-threaded WebAssembly); the API keeps CORS
+  app.use('/*', async (c, next) => {
+    await next();
+    if (!c.req.path.startsWith('/api/')) {
+      c.header('Cross-Origin-Opener-Policy', 'same-origin');
+      c.header('Cross-Origin-Embedder-Policy', 'require-corp');
+    }
+  });
   app.use('/*', serveStatic({ root }));
   const index = readFileSync(join(config.staticDir, 'index.html'), 'utf8');
   app.get('*', (c) => c.html(index));

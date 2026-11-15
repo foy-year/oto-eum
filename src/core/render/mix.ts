@@ -31,7 +31,7 @@ export async function mixProject(project: Project, load: SourceLoader, opts: Mix
     opts.onProgress?.(i / (tracks.length + 1), `Rendering ${t.name}`);
     const sample = project.samples.find((s) => s.id === t.sampleId);
     if (!sample) continue;
-    const src = await load(sample.sourceId);
+    const src = await load(sample.audioId ?? sample.sourceId);
     const stem = renderNoteTrack(t, sample, src, { sampleRate: sr, channels: 2 });
     stems[t.id] = stem;
     master = mixInto(master, stem, 0);

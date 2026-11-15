@@ -17,7 +17,7 @@ const BLACK = new Set([1, 3, 6, 8, 10]);
 /** Render a track with its assigned sample, or a sine "preview synth" if none. */
 export async function previewTrackAudio(project: Project, track: NoteTrack): Promise<Pcm> {
   const sample = project.samples.find((s) => s.id === track.sampleId);
-  if (sample) return renderNoteTrack(track, sample, await loadPcm(sample.sourceId), { sampleRate: project.sampleRate });
+  if (sample) return renderNoteTrack(track, sample, await loadPcm(sample.audioId ?? sample.sourceId), { sampleRate: project.sampleRate });
   const sr = project.sampleRate;
   const sine = createPcm(sr, 1, sr);
   for (let i = 0; i < sr; i++) sine.channels[0][i] = 0.25 * Math.sin((2 * Math.PI * 440 * i) / sr);

@@ -202,7 +202,7 @@ export class RemoteMediaStore implements MediaStore {
     return this.api.listMedia('library');
   }
   async put(asset: MediaAsset, blob: Blob) {
-    const stored = await this.api.uploadMedia(blob, { name: asset.name, kind: asset.kind, duration: asset.duration, width: asset.width, height: asset.height, fps: asset.fps });
+    const stored = await this.api.uploadMedia(blob, { name: asset.name, kind: asset.kind, duration: asset.duration, width: asset.width, height: asset.height, fps: asset.fps, derivedFrom: asset.derivedFrom, stem: asset.stem });
     await set(stored.id, blob, this.cache).catch(() => {});
     return stored;
   }

@@ -111,3 +111,48 @@ describe('sample finder', () => {
     expect(near(0.15).start).toBeLessThan(0.15); // includes the consonant
   });
 });
+
+describe('built-in voice separation', () => {
+  it('pulls a centred voice out of a stereo mix (SDR gain) and stays complementary', async () => {
+    const { separateVoice } = await import('../src/core/analysis/separate');
+    const dur = 2.5;
+    const v = voice((t) => 180 * Math.pow(2, Math.sin(t * 3) / 12), dur); // vibrato-ish melody
+    const n = v.channels[0].length;
+    const L = new Float32Array(n);
+    const R = new Float32Array(n);
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 2 - 1;
+    for (let i = 0; i < n; i++) {
+      const t = i / SR;
+      // pad chord panned left/right with different phases
+      const pad = 0.12 * (Math.sin(2 * Math.PI * 261.6 * t) + Math.sin(2 * Math.PI * 329.6 * t + 1) + Math.sin(2 * Math.PI * 392 * t + 2));
+      L[i] = pad * 0.9;
+      R[i] = 0.3 * 0.12 * (Math.sin(2 * Math.PI * 261.6 * t + 0.5) + Math.sin(2 * Math.PI * 523.2 * t));
+    }
+    for (const hit of [0.3, 0.8, 1.3, 1.8, 2.3]) for (let i = 0; i < 0.08 * SR; i++) {
+      const j = Math.round(hit * SR) + i;
+      const e = Math.exp(-i / (0.02 * SR)) * 0.5;
+      L[j] += rnd() * e;
+      R[j] += rnd() * e;
+    }
+    const voc = v.channels[0];
+    const mix = { sampleRate: SR, channels: [L.map((x, i) => x + voc[i]), R.map((x, i) => x + voc[i])] };
+    const { vocals, accompaniment } = separateVoice(mix);
+    const sdr = (est: Float32Array) => {
+      let s = 0, e = 0;
+      for (let i = 0; i < n; i++) {
+        s += voc[i] * voc[i];
+        e += (voc[i] - est[i]) ** 2;
+      }
+      return 10 * Math.log10(s / e);
+    };
+    const base = sdr(mix.channels[0]);
+    const got = sdr(vocals.channels[0]);
+    console.log(`SDR mixture-as-vocals ${base.toFixed(1)} dB → separated ${got.toFixed(1)} dB`);
+    expect(got - base).toBeGreaterThan(4);
+    // complementary: vocals + accompaniment = mixture
+    let maxErr = 0;
+    for (let i = 0; i < n; i++) maxErr = Math.max(maxErr, Math.abs(vocals.channels[1][i] + accompaniment.channels[1][i] - mix.channels[1][i]));
+    expect(maxErr).toBeLessThan(1e-5);
+  });
+});
