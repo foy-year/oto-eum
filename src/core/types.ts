@@ -56,8 +56,9 @@ export interface NoteTrack {
  * How a sample reacts to a note:
  * - resample: classic 音MAD pitching (speed + pitch change together, like a sampler)
  * - fixed:    no pitch change (drums, hits)
+ * - natural:  pitch changes, speed and formants don't (PSOLA) — voices stay voices
  */
-export type PitchMode = 'resample' | 'fixed';
+export type PitchMode = 'resample' | 'fixed' | 'natural';
 
 /**
  * What happens when the note is shorter/longer than the sample:
@@ -88,6 +89,8 @@ export interface Sample {
   release?: number;
   /** Effects baked into the sample before it is triggered. */
   effects?: Effect[];
+  /** Pitch flattening ("tuning") strength 0..1 applied to the clip first. */
+  flatten?: number;
 }
 
 export type EffectType =
@@ -135,6 +138,8 @@ export interface Rect {
  */
 export interface VideoEvent {
   sourceId: Id;
+  /** Note track that produced this event (synced events only). */
+  trackId?: Id;
   /** Timeline start/end. */
   start: number;
   end: number;
@@ -168,6 +173,19 @@ export interface VideoEvent {
 }
 
 export type SyncLayout = 'single' | 'grid' | 'columns' | 'rows';
+
+/** A section of the video with its own layout. */
+export interface VideoScene {
+  id: Id;
+  /** Start time in seconds; the scene lasts until the next one. */
+  from: number;
+  /** 'focus' = first track large on the left, the others in a grid on the right. */
+  layout: SyncLayout | 'focus' | 'custom';
+  /** Visible tracks in display order (first = focus). Tracks not listed are hidden. */
+  order: Id[];
+  /** Positions for 'custom' (normalised 0..1), by track id. */
+  rects?: Record<Id, Rect>;
+}
 
 export interface VideoSyncSettings {
   width: number;
@@ -217,6 +235,8 @@ export interface Project {
   videoSync: VideoSyncSettings;
   /** Track ids included in the video synchronizer (others are audio-only). */
   videoTrackIds?: Id[];
+  /** Layout changes over time. Empty/undefined: one layout from videoSync for the whole video. */
+  videoScenes?: VideoScene[];
   videoClips: VideoClip[];
   /** Optional backing audio (e.g. the original song) mixed under the render. */
   backingAudioId?: Id;

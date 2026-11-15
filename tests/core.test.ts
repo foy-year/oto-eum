@@ -286,3 +286,28 @@ describe('tempo grid from notes', () => {
     expect(r.stepError).toBeLessThan(0.15);
   });
 });
+
+describe('video scenes', () => {
+  it('splits events at scene changes, re-lays them out and hides unlisted tracks', async () => {
+    const { applyScenes, sceneRects } = await import('../src/core/video/timeline');
+    const ev = (trackId: string, start: number, end: number) => ({ sourceId: 'v', trackId, start, end, sourceIn: 1, sourceLoopEnd: 3, rate: 1, overrun: 'hold' as const, layer: 0, rect: { x: 0, y: 0, w: 1, h: 1 }, punch: 1.1, flash: 0.3 });
+    const scenes = [
+      { id: 's1', from: 0, layout: 'columns' as const, order: ['a', 'b'] },
+      { id: 's2', from: 2, layout: 'focus' as const, order: ['b', 'a', 'c'] },
+      { id: 's3', from: 4, layout: 'single' as const, order: ['c'] },
+    ];
+    const out = applyScenes([ev('a', 1, 3), ev('b', 0, 5), ev('c', 0, 6)], scenes);
+    const a = out.filter((e) => e.trackId === 'a');
+    expect(a.map((e) => [e.start, e.end])).toEqual([[1, 2], [2, 3]]);
+    expect(a[0].rect).toEqual({ x: 0, y: 0, w: 0.5, h: 1 });
+    expect(a[1].sourceIn).toBeCloseTo(2); // continues where it was (1 + 1 s)
+    expect(a[1].punch).toBe(1); // no re-trigger on the cut
+    expect(out.filter((e) => e.trackId === 'b').map((e) => [e.start, e.end])).toEqual([[0, 2], [2, 4]]); // hidden in s3
+    const c = out.filter((e) => e.trackId === 'c');
+    expect(c.map((e) => [e.start, e.end])).toEqual([[2, 4], [4, 6]]); // hidden in s1
+    expect(c[1].rect).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+    const f = sceneRects(scenes[1]);
+    expect(f.b).toEqual({ x: 0, y: 0, w: 0.5, h: 1 });
+    expect(f.a.x).toBeGreaterThanOrEqual(0.5);
+  });
+});

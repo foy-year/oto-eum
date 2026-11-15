@@ -71,3 +71,9 @@ textarea { font: inherit; color: inherit; background: #222838; border: 1px solid
 .boot-error { padding: 24px; font: 14px/1.5 system-ui, sans-serif; color: #e4e8f1; background: #0d0f15; }
 .roll-canvas { width: 100%; max-width: 960px; display: block; margin: 0 auto; cursor: crosshair; image-rendering: pixelated; touch-action: none; }
 .swatch { display: inline-block; width: 18px; height: 12px; border-radius: 2px; border: 1px solid #000; vertical-align: middle; }
+.scene-canvas { width: 100%; max-width: 640px; display: block; border-radius: 4px; cursor: move; touch-action: none; }
+.scene-preview { position: relative; width: 100%; max-width: 480px; aspect-ratio: 16 / 9; background: #0b0d14; border-radius: 4px; }
+.scene-preview > div { position: absolute; box-sizing: border-box; border: 2px solid; font-size: 11px; padding: 2px 4px; overflow: hidden; color: #fff; background: rgba(255,255,255,.05); }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 12px; }
+.chip.on { border-color: var(--accent); }
+.chip button { padding: 0 4px; }

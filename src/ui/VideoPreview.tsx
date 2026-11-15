@@ -19,7 +19,7 @@ export function previewFrames(): MediaFrameProvider {
  * Canvas preview of a list of VideoEvents, synchronised to the audio clock,
  * plus frame-exact export.
  */
-export function VideoPreview(props: { events: VideoEvent[]; settings: VideoSyncSettings; getAudio: () => Promise<Pcm | null>; name: string }) {
+export function VideoPreview(props: { events: VideoEvent[]; settings: VideoSyncSettings; getAudio: () => Promise<Pcm | null>; name: string; onTime?: (t: number) => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -30,6 +30,8 @@ export function VideoPreview(props: { events: VideoEvent[]; settings: VideoSyncS
   const { width, height } = props.settings;
   const previewW = 640;
   const previewH = Math.round((previewW * height) / width);
+
+  useEffect(() => props.onTime?.(t), [t]);
 
   const draw = (time: number) => {
     const c = canvas.current;

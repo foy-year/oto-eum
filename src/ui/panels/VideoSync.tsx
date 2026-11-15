@@ -1,4 +1,5 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { ScenesEditor } from '../ScenesEditor';
 import { useStore } from '../store';
 import { Check, Num, Pick, Row, Section } from '../widgets';
 import { projectVideoEvents, videoTracksOf } from '../../core/video/timeline';
@@ -16,6 +17,7 @@ export function VideoSync() {
   const s = project.videoSync;
   const set = (patch: Partial<VideoSyncSettings>) => update((p) => void (p.videoSync = { ...p.videoSync, ...patch }));
   const events = useMemo(() => projectVideoEvents(project, assets, endTime(project.tracks)), [project, assets]);
+  const [now, setNow] = useState(0);
   const vtracks = videoTracksOf({ tracks: project.tracks, samples: project.samples, assets, trackIds: project.videoTrackIds });
 
   return (
@@ -33,7 +35,7 @@ export function VideoSync() {
           />
           <Pick label="FPS" value={String(s.fps)} options={['24', '25', '30', '50', '60'].map((v) => ({ value: v, label: v }))} onChange={(v) => set({ fps: +v })} />
           <Pick
-            label="Layout"
+            label={project.videoScenes?.length ? 'Layout (overridden by scenes)' : 'Layout'}
             value={s.layout}
             options={(['single', 'grid', 'columns', 'rows'] as SyncLayout[]).map((v) => ({ value: v, label: v }))}
             onChange={(v) => set({ layout: v })}
@@ -56,8 +58,9 @@ export function VideoSync() {
             : 'No track uses a sample cut from a video yet. In the Sound Editor, cut a sample from an uploaded video, then assign it to a track in the Sound Applier.'}
         </p>
       </Section>
+      <ScenesEditor now={now} />
       <Section title="Preview & export">
-        <VideoPreview events={events} settings={s} getAudio={() => renderMix()} name={project.name} />
+        <VideoPreview events={events} settings={s} getAudio={() => renderMix()} name={project.name} onTime={setNow} />
       </Section>
     </div>
   );

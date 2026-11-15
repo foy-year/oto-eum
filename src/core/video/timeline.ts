@@ -3,11 +3,11 @@
  *
  * The synchronizer turns every note of a sampled track into a VideoEvent that
  * plays the *same* source region as the audio, at the *same* rate. Because
- * `noteRate` is shared with the audio sampler, picture and sound stay
+ * `playbackRate` is shared with the audio sampler, picture and sound stay
  * sample-locked — the core trick of 音MAD / YTPMV.
  */
-import type { MediaAsset, Note, NoteTrack, Project, Rect, Sample, SyncLayout, VideoClip, VideoEvent, VideoSyncSettings } from '../types';
-import { noteRate, voiceDuration } from '../render/sampler';
+import type { MediaAsset, Note, NoteTrack, Project, Rect, Sample, SyncLayout, VideoClip, VideoEvent, VideoScene, VideoSyncSettings } from '../types';
+import { playbackRate, voiceDuration } from '../render/sampler';
 import { sortNotes, endTime } from '../midi/midi';
 
 export const DEFAULT_SYNC: VideoSyncSettings = {
@@ -80,13 +80,14 @@ export function buildSyncEvents(input: SyncInput): VideoEvent[] {
     const len = sample.end - sample.start;
     const notes = sortNotes(track.notes);
     notes.forEach((n: Note, ni) => {
-      const rate = noteRate(sample, n.pitch);
+      const rate = playbackRate(sample, n.pitch);
       const sounding = voiceDuration(sample, n, len);
       const next = notes.slice(ni + 1).find((m) => m.start > n.start + 1e-4);
       const end = st.holdLastFrame ? (next ? next.start : Math.max(total, n.start + sounding)) : n.start + sounding;
       if (end <= n.start) return;
       events.push({
         sourceId: sample.sourceId,
+        trackId: track.id,
         start: n.start,
         end,
         sourceIn: sample.start,
@@ -193,9 +194,68 @@ export function framesNeeded(events: VideoEvent[], t0: number, t1: number, fps: 
   return new Map([...need].map(([k, v]) => [k, [...v].sort((a, b) => a - b)]));
 }
 
+/** Rectangles for a scene's visible tracks. */
+export function sceneRects(scene: Pick<VideoScene, 'layout' | 'order' | 'rects'>): Record<string, Rect> {
+  const ids = scene.order;
+  const out: Record<string, Rect> = {};
+  if (scene.layout === 'custom') {
+    ids.forEach((id, i) => (out[id] = scene.rects?.[id] ?? layoutRects('grid', ids.length)[i]));
+  } else if (scene.layout === 'focus') {
+    if (ids.length === 1) out[ids[0]] = { x: 0, y: 0, w: 1, h: 1 };
+    else {
+      out[ids[0]] = { x: 0, y: 0, w: 0.5, h: 1 };
+      const rest = layoutRects('grid', ids.length - 1);
+      ids.slice(1).forEach((id, i) => (out[id] = { x: 0.5 + rest[i].x * 0.5, y: rest[i].y, w: rest[i].w * 0.5, h: rest[i].h }));
+    }
+  } else {
+    const r = layoutRects(scene.layout, ids.length);
+    ids.forEach((id, i) => (out[id] = r[i]));
+  }
+  return out;
+}
+
+/**
+ * Apply scenes to synced events: split events that cross a scene change,
+ * place each piece by its scene, hide tracks a scene doesn't show.
+ */
+export function applyScenes(events: VideoEvent[], scenes: VideoScene[]): VideoEvent[] {
+  const sc = scenes.slice().sort((a, b) => a.from - b.from);
+  if (!sc.length) return events;
+  const layouts = sc.map((s) => sceneRects(s));
+  const sceneAt = (t: number) => {
+    let k = 0;
+    for (let i = 0; i < sc.length; i++) if (sc[i].from <= t + 1e-6) k = i;
+    return k;
+  };
+  const out: VideoEvent[] = [];
+  for (const e of events) {
+    if (!e.trackId) {
+      out.push(e);
+      continue;
+    }
+    const cuts = [e.start, ...sc.map((s) => s.from).filter((t) => t > e.start && t < e.end), e.end];
+    for (let i = 0; i + 1 < cuts.length; i++) {
+      const [a, b] = [cuts[i], cuts[i + 1]];
+      const k = sceneAt(a);
+      const rect = layouts[k][e.trackId];
+      if (!rect) continue;
+      const first = i === 0;
+      out.push({
+        ...e,
+        start: a,
+        end: b,
+        sourceIn: first ? e.sourceIn : sourceTimeAt(e, a) ?? e.sourceIn,
+        rect,
+        layer: sc[k].layout === 'single' ? 0 : sc[k].order.indexOf(e.trackId),
+        punch: first ? e.punch : 1,
+        flash: first ? e.flash : 0,
+      });
+    }
+  }
+  return out;
+}
+
 export function projectVideoEvents(project: Project, assets: MediaAsset[], duration?: number): VideoEvent[] {
-  return [
-    ...buildSyncEvents({ tracks: project.tracks, samples: project.samples, assets, settings: project.videoSync, trackIds: project.videoTrackIds, duration }),
-    ...clipsToEvents(project.videoClips),
-  ];
+  const synced = buildSyncEvents({ tracks: project.tracks, samples: project.samples, assets, settings: project.videoSync, trackIds: project.videoTrackIds, duration });
+  return [...(project.videoScenes?.length ? applyScenes(synced, project.videoScenes) : synced), ...clipsToEvents(project.videoClips)];
 }

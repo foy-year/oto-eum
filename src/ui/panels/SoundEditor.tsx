@@ -1,13 +1,68 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { job, loadPcm, useStore } from '../store';
 import { Check, Num, Pick, Pitch, Row, Section, Waveform, fmt } from '../widgets';
 import { type Pcm, slice } from '../../core/audio/pcm';
-import { detectRootPitch, midiToName } from '../../core/analysis/pitch';
+import { detectRootPitch, hzToMidi, midiToName } from '../../core/analysis/pitch';
 import { detectOnsets, sliceAtOnsets } from '../../core/analysis/onset';
 import { createSample } from '../../core/project';
 import { prepareSample, renderTrack } from '../../core/render/sampler';
 import type { Sample } from '../../core/types';
 import { play, stop } from '../player';
+import { analyzeF0, flattenPitch } from '../../core/render/psola';
+
+/** Pitch over the sample: grey = original, green = after flattening; dashed = root note. */
+function PitchCurve({ pcm, sample }: { pcm: Pcm; sample: Sample }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const curves = useMemo(() => {
+    const clip = slice(pcm, sample.start, sample.end);
+    const raw = analyzeF0(clip);
+    const flat = sample.flatten ? analyzeF0(flattenPitch(clip, { strength: sample.flatten }).pcm) : null;
+    return { raw, flat };
+  }, [pcm, sample.start, sample.end, sample.flatten]);
+  useEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    const W = (c.width = c.clientWidth * devicePixelRatio);
+    const H = (c.height = 70 * devicePixelRatio);
+    const g = c.getContext('2d')!;
+    g.fillStyle = '#11131a';
+    g.fillRect(0, 0, W, H);
+    const root = sample.rootPitch + (sample.rootCents ?? 0) / 100;
+    const y = (m: number) => H / 2 - (m - root) * (H / 8); // ±4 semitones visible
+    g.strokeStyle = '#ffcc4d';
+    g.setLineDash([4, 4]);
+    g.beginPath();
+    g.moveTo(0, H / 2);
+    g.lineTo(W, H / 2);
+    g.stroke();
+    g.setLineDash([]);
+    const draw = (tr: typeof curves.raw, color: string) => {
+      g.strokeStyle = color;
+      g.lineWidth = 2 * devicePixelRatio;
+      g.beginPath();
+      let pen = false;
+      const n = tr.f0.length;
+      tr.f0.forEach((f, i) => {
+        const x = (i / Math.max(1, n - 1)) * W;
+        if (f > 0) {
+          const yy = Math.max(0, Math.min(H, y(hzToMidi(f))));
+          if (pen) g.lineTo(x, yy);
+          else g.moveTo(x, yy);
+          pen = true;
+        } else pen = false;
+      });
+      g.stroke();
+    };
+    draw(curves.raw, '#6b7390');
+    if (curves.flat) draw(curves.flat, '#5ad1b3');
+  }, [curves, sample.rootPitch, sample.rootCents]);
+  return (
+    <div>
+      <canvas ref={ref} className="waveform" style={{ height: 70 }} />
+      <span className="hint">Pitch over the sample (±4 semitones around the root, dashed). Grey: original{sample.flatten ? ', green: flattened' : ''}.</span>
+    </div>
+  );
+}
 
 /**
  * Sound Editor: cut samples (instruments) out of uploaded sources, detect their
@@ -151,9 +206,29 @@ export function SoundEditor() {
             >
               Detect pitch
             </button>
-            <Pick label="Pitch mode" value={current.pitchMode} options={[{ value: 'resample', label: 'resample (classic)' }, { value: 'fixed', label: 'fixed (no pitch)' }]} onChange={(v) => updateSample(current.id, { pitchMode: v })} />
+            <Pick
+              label="Pitch mode"
+              value={current.pitchMode}
+              options={[
+                { value: 'resample', label: 'resample (classic: faster = higher)' },
+                { value: 'natural', label: 'natural (keeps speed & voice)' },
+                { value: 'fixed', label: 'fixed (no pitch)' },
+              ]}
+              onChange={(v) => updateSample(current.id, { pitchMode: v })}
+            />
+            <Pick
+              label="Flatten pitch"
+              value={String(current.flatten ?? 0)}
+              options={[
+                { value: '0', label: 'off' },
+                { value: '0.5', label: '50% (keep some movement)' },
+                { value: '1', label: '100% (one steady note)' },
+              ]}
+              onChange={(v) => updateSample(current.id, { flatten: +v || undefined })}
+            />
             <Pick label="Sustain" value={current.sustain} options={[{ value: 'cut', label: 'cut at note end' }, { value: 'full', label: 'one-shot (full)' }, { value: 'loop', label: 'loop' }]} onChange={(v) => updateSample(current.id, { sustain: v })} />
           </Row>
+          {pcm && <PitchCurve pcm={pcm} sample={current} />}
           <Row>
             <Num label="Gain" value={current.gain} step={0.05} onChange={(v) => updateSample(current.id, { gain: v })} />
             <Num label="Fade in" value={current.fadeIn} step={0.001} unit="s" onChange={(v) => updateSample(current.id, { fadeIn: v })} />

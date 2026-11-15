@@ -2,11 +2,12 @@
  * Sound Applier engine: plays a Sample at every note of a track.
  *
  * Pure JS, sample-accurate and deterministic, so the exact same schedule drives
- * both the audio render and the video synchronizer (see `noteRate`).
+ * both the audio render and the video synchronizer (see `playbackRate`).
  */
 import { type Pcm, createPcm, lengthOf, slice, reverse, fade, applyGain, resample, withChannels, panPcm } from '../audio/pcm';
 import type { Note, NoteTrack, Sample } from '../types';
 import { applyEffects } from './effects';
+import { analyzeF0, flattenPitch, shiftPitch, type F0Track } from './psola';
 
 /** Playback rate for a note given the sample's root (1 = original speed). */
 export function noteRate(sample: Pick<Sample, 'rootPitch' | 'rootCents' | 'pitchMode'>, pitch: number): number {
@@ -15,9 +16,14 @@ export function noteRate(sample: Pick<Sample, 'rootPitch' | 'rootCents' | 'pitch
   return Math.pow(2, (pitch - root) / 12);
 }
 
+/** Playback speed for a note: only 'resample' speeds the clip up/down; 'natural' shifts pitch at speed 1. */
+export function playbackRate(sample: Pick<Sample, 'rootPitch' | 'rootCents' | 'pitchMode'>, pitch: number): number {
+  return sample.pitchMode === 'resample' ? noteRate(sample, pitch) : 1;
+}
+
 /** How long (timeline seconds) a sample sounds for a given note. */
 export function voiceDuration(sample: Sample, note: Note, sampleLength: number): number {
-  const rate = noteRate(sample, note.pitch);
+  const rate = playbackRate(sample, note.pitch);
   const natural = sampleLength / rate;
   const release = sample.release ?? 0.01;
   switch (sample.sustain) {
@@ -34,6 +40,7 @@ export function voiceDuration(sample: Sample, note: Note, sampleLength: number):
 /** Resolve a Sample definition against its source audio → the clip actually played. */
 export function prepareSample(source: Pcm, sample: Sample, targetRate?: number): Pcm {
   let clip = slice(source, sample.start, sample.end);
+  if (sample.flatten) clip = flattenPitch(clip, { strength: sample.flatten }).pcm;
   if (sample.reverse) clip = reverse(clip);
   if (sample.effects?.length) clip = applyEffects(clip, sample.effects);
   clip = fade(clip, sample.fadeIn, sample.fadeOut);
@@ -50,7 +57,7 @@ export interface RenderTrackOptions {
 }
 
 /**
- * Render one track: for each note, resample the clip at `noteRate` and mix it in.
+ * Render one track: for each note, play the clip at `playbackRate` (shifted with PSOLA in 'natural' mode) and mix it in.
  * Uses 4-point (cubic Hermite) interpolation for clean pitch-shifting.
  */
 export function renderTrack(notes: Note[], clip: Pcm, sample: Sample, opts: RenderTrackOptions): Pcm {
@@ -66,9 +73,25 @@ export function renderTrack(notes: Note[], clip: Pcm, sample: Sample, opts: Rend
   const releaseS = Math.max(1, Math.round((sample.release ?? 0.01) * sr));
   const attackS = Math.max(1, Math.round(0.002 * sr)); // de-click
 
+  // 'natural' mode: one formant-preserving shifted copy per distinct pitch
+  let f0: F0Track | null = null;
+  const shifted = new Map<number, Pcm>();
+  const voiceFor = (pitch: number): Pcm => {
+    if (sample.pitchMode !== 'natural') return src;
+    const key = Math.round(pitch * 100);
+    let v = shifted.get(key);
+    if (!v) {
+      f0 ??= analyzeF0(src);
+      v = shiftPitch(src, 12 * Math.log2(noteRate(sample, pitch)), f0);
+      shifted.set(key, v);
+    }
+    return v;
+  };
+
   for (const n of notes) {
     if (srcLen < 2) break;
-    const rate = noteRate(sample, n.pitch);
+    const rate = playbackRate(sample, n.pitch);
+    const voice = voiceFor(n.pitch);
     const dur = voiceDuration(sample, n, srcDur);
     const o0 = Math.round(n.start * sr);
     const count = Math.min(Math.round(dur * sr), outLen - o0);
@@ -76,7 +99,7 @@ export function renderTrack(notes: Note[], clip: Pcm, sample: Sample, opts: Rend
     const gain = n.velocity;
     const loop = sample.sustain === 'loop';
     for (let c = 0; c < chs; c++) {
-      const s = src.channels[c];
+      const s = voice.channels[c];
       const d = out.channels[c];
       for (let i = 0; i < count; i++) {
         let pos = i * rate;

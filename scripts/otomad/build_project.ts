@@ -154,6 +154,13 @@ project.samples = [...Object.values(S), ...Object.values(D), outroSample];
 const melodic = [tracks.main, tracks.harmony, tracks.wild, tracks.bass, tracks.chorus, tracks.arp];
 project.tracks = [...melodic, ...drumTracks, outroTrack];
 project.videoTrackIds = melodic.map((t) => t.id);
+// scenes: intro = main + bass, band enters = main focus + 4, wild track enters = 3×2 grid
+const wildStart = Math.min(...tracks.wild.notes.map((n) => n.start));
+project.videoScenes = [
+  { id: 'intro', from: 0, layout: 'columns', order: [tracks.main.id, tracks.bass.id] },
+  { id: 'band', from: firstBar, layout: 'focus', order: [tracks.main.id, tracks.harmony.id, tracks.chorus.id, tracks.bass.id, tracks.arp.id] },
+  { id: 'all', from: wildStart, layout: 'grid', order: [tracks.main.id, tracks.harmony.id, tracks.wild.id, tracks.bass.id, tracks.chorus.id, tracks.arp.id] },
+];
 project.masterEffects = [createEffect('compressor', { threshold: -14, ratio: 3, attack: 0.003, release: 0.12, makeup: 2 }), createEffect('normalize', { peak: 0.95 })];
 project.videoSync = { ...project.videoSync, width: 1280, height: 720, fps: 30, layout: 'grid', alternateFlip: true, hueByPitch: false, punch: 1.1, flash: 0.3, holdLastFrame: true, background: '#0b0d14' };
 const clip: VideoClip = { id: 'outro', sourceId: 'ad', start: outroStart, sourceIn: OUTRO.a, sourceOut: OUTRO.b, rate: 1, layer: 0, rect: { x: 0, y: 0, w: 1, h: 1 } };
