@@ -7,6 +7,7 @@ import { importMidi, monophonize, splitVoices } from '../../core/midi/midi';
 import { detectOnsets, estimateTempo } from '../../core/analysis/onset';
 import { createTrack } from '../../core/project';
 import { slice } from '../../core/audio/pcm';
+import { RollReader } from './RollReader';
 
 /** MIDI Extractor: audio/video → notes (Basic Pitch or YIN), plus .mid import. */
 export function MidiExtract() {
@@ -73,6 +74,7 @@ export function MidiExtract() {
         />
       </Section>
 
+      <RollReader />
       {!asset ? (
         <div className="empty">Upload a source in the Library to extract MIDI from audio/video.</div>
       ) : (

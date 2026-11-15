@@ -3,7 +3,7 @@ import { download, job, loadPcm, useStore } from '../store';
 import { Check, Num, Pick, Row, Section } from '../widgets';
 import type { Note, NoteTrack, Project } from '../../core/types';
 import { uid } from '../../core/types';
-import { exportMidi, gridSeconds, legato, monophonize, quantize, splitVoices, transpose, setVelocity, mergeRepeats, endTime } from '../../core/midi/midi';
+import { estimateGrid, exportMidi, gridSeconds, legato, monophonize, quantize, splitVoices, transpose, setVelocity, mergeRepeats, endTime } from '../../core/midi/midi';
 import { midiToName } from '../../core/analysis/pitch';
 import { createTrack, createSample } from '../../core/project';
 import { renderNoteTrack, renderTrack } from '../../core/render/sampler';
@@ -41,7 +41,8 @@ export function MidiEditor() {
   const [, tick] = useState(0);
 
   const grid = gridSeconds(project.bpm, division);
-  const snapT = (t: number) => (snap ? Math.round(t / grid) * grid : t);
+  const go = project.gridOffset ?? 0;
+  const snapT = (t: number) => (snap ? go + Math.round((t - go) / grid) * grid : t);
   const setNotes = (notes: Note[]) => track && updateTrack(track.id, { notes });
 
   // playhead animation
@@ -88,9 +89,9 @@ export function MidiEditor() {
     }
     // grid
     const beat = 60 / project.bpm;
-    for (let t = Math.floor(scrollX / grid) * grid; x(t) < W; t += grid) {
-      const isBar = Math.abs(t / (beat * 4) - Math.round(t / (beat * 4))) < 1e-6;
-      const isBeat = Math.abs(t / beat - Math.round(t / beat)) < 1e-6;
+    for (let t = go + Math.floor((scrollX - go) / grid) * grid; x(t) < W; t += grid) {
+      const isBar = Math.abs((t - go) / (beat * 4) - Math.round((t - go) / (beat * 4))) < 1e-6;
+      const isBeat = Math.abs((t - go) / beat - Math.round((t - go) / beat)) < 1e-6;
       g.fillStyle = isBar ? '#4a5270' : isBeat ? '#33394d' : '#262b3a';
       g.fillRect(x(t), 0, 1, H);
     }
@@ -143,7 +144,7 @@ export function MidiEditor() {
       setSel(next);
       ids = [...next];
     } else {
-      const n: Note = { id: uid('n'), pitch: h.pitch, start: Math.max(0, snap ? Math.floor(h.t / grid) * grid : h.t), duration: grid, velocity: 0.8 };
+      const n: Note = { id: uid('n'), pitch: h.pitch, start: Math.max(0, snap ? go + Math.floor((h.t - go) / grid) * grid : h.t), duration: grid, velocity: 0.8 };
       setNotes([...track.notes, n]);
       setSel(new Set([n.id]));
       ids = [n.id];
@@ -228,6 +229,20 @@ export function MidiEditor() {
                 <input value={track.name} onChange={(e) => updateTrack(track.id, { name: e.target.value })} />
               </label>
               <Num label="BPM" value={project.bpm} step={1} onChange={(v) => update((p) => void (p.bpm = Math.max(20, v)))} />
+              <Num label="Grid offset" value={go} step={0.001} unit="s" onChange={(v) => update((p) => void (p.gridOffset = v))} />
+              <button
+                title="Estimate tempo and grid position from the notes of all tracks"
+                onClick={() => {
+                  const r = estimateGrid(project.tracks.flatMap((t) => t.notes));
+                  if (!r) return alert('Not enough notes to estimate a tempo.');
+                  update((p) => {
+                    p.bpm = Math.round(r.bpm * 100) / 100;
+                    p.gridOffset = Math.round(r.offset * 1000) / 1000;
+                  });
+                }}
+              >
+                Detect tempo
+              </button>
               <Pick label="Grid" value={String(division)} options={[4, 8, 12, 16, 24, 32, 64].map((d) => ({ value: String(d), label: `1/${d}` }))} onChange={(v) => setDivision(+v)} />
               <Check label="Snap" value={snap} onChange={setSnap} />
               <Check label="Ghost other tracks" value={ghosts} onChange={setGhosts} />
@@ -238,8 +253,8 @@ export function MidiEditor() {
               <button onClick={stop}>■ Stop</button>
               <span className="sep" />
               <span className="hint">{sel.size ? `${sel.size} selected →` : 'All notes →'}</span>
-              <button onClick={() => applyOp((n) => quantize(n, project.bpm, division))}>Quantize</button>
-              <button onClick={() => applyOp((n) => quantize(n, project.bpm, division, { strength: 0.5 }))}>Quantize 50%</button>
+              <button onClick={() => applyOp((n) => quantize(n, project.bpm, division, { offset: go }))}>Quantize</button>
+              <button onClick={() => applyOp((n) => quantize(n, project.bpm, division, { strength: 0.5, offset: go }))}>Quantize 50%</button>
               <button onClick={() => applyOp((n) => transpose(n, 1))}>+1</button>
               <button onClick={() => applyOp((n) => transpose(n, -1))}>−1</button>
               <button onClick={() => applyOp((n) => transpose(n, 12))}>+8va</button>

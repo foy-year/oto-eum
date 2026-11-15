@@ -332,3 +332,6 @@ export async function job<T>(label: string, fn: () => Promise<T>): Promise<T | u
     setBusy(undefined);
   }
 }
+
+// e2e/debug hook (dev server only)
+if (import.meta.env.DEV) (globalThis as unknown as { __otoStore?: typeof useStore }).__otoStore = useStore;

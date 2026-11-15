@@ -271,3 +271,18 @@ describe('video synchronizer', () => {
     expect(need.get('vid')!.length).toBe(10);
   });
 });
+
+describe('tempo grid from notes', () => {
+  it('recovers BPM and offset from jittered notes', async () => {
+    const { estimateGrid } = await import('../src/core/midi/midi');
+    const bpm = 165.5;
+    const g = 60 / bpm / 4;
+    const rng = (i: number) => ((Math.sin(i * 12.9898) * 43758.5453) % 1) * 0.008; // ±8 ms
+    const steps = [0, 2, 3, 4, 6, 8, 10, 11, 12, 14, 16, 19, 20, 22, 24, 26, 28, 30, 32, 35, 36, 40, 44, 46, 48];
+    const notes = steps.map((k, i) => note(60 + (i % 5), 1.6 + k * g + rng(i), g));
+    const r = estimateGrid(notes)!;
+    expect(r.bpm).toBeCloseTo(bpm, 0);
+    expect(Math.abs(r.offset - 1.6)).toBeLessThan(0.012);
+    expect(r.stepError).toBeLessThan(0.15);
+  });
+});

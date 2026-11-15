@@ -126,7 +126,9 @@ export type FrameSource = (index: number) => RgbFrame;
  * ignored; a page flip changes nearly every column.
  */
 export function pageChange(a: RgbFrame, b: RgbFrame, r: Rect4): number {
-  const col = columnDiff(a, b, r);
+  return medianColumn(columnDiff(a, b, r), r);
+}
+function medianColumn(col: Float32Array, r: Rect4): number {
   const rows = Math.ceil((r.y1 - r.y0) / 2) * 3;
   const sorted = Array.from(col, (v) => v / rows).sort((x, y) => x - y);
   return sorted[sorted.length >> 1];
@@ -180,7 +182,9 @@ export function robustLine(pts: Array<[number, number]>, maxResidual = 6): { a: 
 
 /** x of a thin moving playhead between two frames, or null. */
 export function playheadBetween(prev: RgbFrame, cur: RgbFrame, roi: Rect4, maxWidth = 12): number | null {
-  const col = columnDiff(prev, cur, roi);
+  return playheadFromColumns(columnDiff(prev, cur, roi), roi, maxWidth);
+}
+function playheadFromColumns(col: Float32Array, roi: Rect4, maxWidth = 12): number | null {
   let max = 0;
   for (const v of col) max = Math.max(max, v);
   if (max <= 200) return null;
@@ -296,54 +300,97 @@ export interface ReadResult {
   rawNotes: RollNote[];
 }
 
-/** Full pipeline. `count` frames at `fps`, accessed through `get`. */
-export function readPianoRollVideo(get: FrameSource, count: number, fps: number, cfg: PianoRollConfig, onProgress?: (msg: string) => void): ReadResult {
-  // Pass 1: picture change and playhead position for every frame.
-  const diffs = [0];
-  const heads: Array<number | null> = [null];
-  let prev = get(0);
-  for (let i = 1; i < count; i++) {
-    const cur = get(i);
-    diffs.push(pageChange(prev, cur, cfg.roi));
-    heads.push(playheadBetween(prev, cur, cfg.roi));
-    prev = cur;
-  }
-  // Page flips: the playhead jumps backwards (reliable even on sparse rolls) …
-  const flip = new Array<boolean>(count).fill(false);
-  const roiW = cfg.roi.x1 - cfg.roi.x0;
-  let lastX: number | null = null;
-  let lastI = 0;
-  for (let i = 1; i < count; i++) {
+/** Fit the playhead samples that fall inside frames [from, to]. */
+export function fitPage(heads: ArrayLike<number | null>, from: number, to: number, fps: number): Page | null {
+  const pts: Array<[number, number]> = [];
+  for (let i = from + 1; i <= to; i++) {
     const x = heads[i];
-    if (x == null) continue;
-    if (lastX != null && x < lastX - 0.3 * roiW) {
-      // the flip itself is the biggest picture change since the last sample
-      let k = lastI + 1;
-      for (let j = lastI + 1; j <= i; j++) if (diffs[j] > diffs[k]) k = j;
-      flip[k] = true;
+    if (x != null) pts.push([(i - 0.5) / fps, x]);
+  }
+  const fit = robustLine(pts);
+  if (!fit || fit.b <= 0) return null;
+  const t0 = from / fps;
+  return { startFrame: from, endFrame: to, t0, x0: fit.a + fit.b * t0, v: fit.b, playheadSamples: fit.n };
+}
+
+/**
+ * Streaming pass over a piano-roll video. Push frames in order (the scanner
+ * keeps at most 7 of them), then call finish() to get the pages and which
+ * frame indices to fetch for each page's playhead-free composite.
+ * Works for any length of video in constant memory.
+ */
+export class RollScanner {
+  private cfg: PianoRollConfig;
+  private fps: number;
+  private ring: RgbFrame[] = [];
+  private diffs: number[] = [];
+  private heads: Array<number | null> = [];
+  private persistent: boolean[] = [];
+  count = 0;
+  constructor(cfg: PianoRollConfig, fps: number) {
+    this.cfg = cfg;
+    this.fps = fps;
+  }
+
+  /** Takes ownership of the frame (do not reuse its buffer). */
+  push(f: RgbFrame): void {
+    const prev = this.ring[this.ring.length - 1];
+    if (prev) {
+      const col = columnDiff(prev, f, this.cfg.roi);
+      this.diffs.push(medianColumn(col, this.cfg.roi));
+      this.heads.push(playheadFromColumns(col, this.cfg.roi));
+    } else {
+      this.diffs.push(0);
+      this.heads.push(null);
     }
-    lastX = x;
-    lastI = i;
+    this.persistent.push(false);
+    this.ring.push(f);
+    if (this.ring.length > 7) this.ring.shift();
+    this.count++;
+    // a picture change at i is "persistent" if frames i-3 and i+3 differ (not a one-frame glitch)
+    const i = this.count - 4;
+    if (i >= 1 && this.diffs[i] > 2.5 && this.ring.length === 7) this.persistent[i] = pageChange(this.ring[0], this.ring[6], this.cfg.roi) >= 6;
   }
-  // … or the whole picture changes and stays changed (not a one-frame glitch)
-  for (let i = 1; i < count; i++) {
-    if (flip[i] || diffs[i] <= 2.5) continue;
-    const a = get(Math.max(0, i - 3));
-    const b = get(Math.min(count - 1, i + 3));
-    if (pageChange(a, b, cfg.roi) >= 6) flip[i] = true;
+
+  finish(): { pages: Page[]; picks: Array<[number, number, number]> } {
+    const n = this.count;
+    // tail frames that never got a full ±3 window
+    for (let i = Math.max(1, n - 3); i < n; i++) if (this.diffs[i] > 2.5 && this.ring.length) this.persistent[i] = pageChange(this.ring[0], this.ring[this.ring.length - 1], this.cfg.roi) >= 6;
+    const flip = this.persistent.slice();
+    // page flips: the playhead jumps backwards (reliable even on sparse rolls)
+    const roiW = this.cfg.roi.x1 - this.cfg.roi.x0;
+    let lastX: number | null = null;
+    let lastI = 0;
+    for (let i = 1; i < n; i++) {
+      const x = this.heads[i];
+      if (x == null) continue;
+      if (lastX != null && x < lastX - 0.3 * roiW) {
+        let k = lastI + 1;
+        for (let j = lastI + 1; j <= i; j++) if (this.diffs[j] > this.diffs[k]) k = j;
+        flip[k] = true;
+      }
+      lastX = x;
+      lastI = i;
+    }
+    const segs = segmentPages(flip.map((f) => (f ? 1 : 0)), this.fps, 0.5);
+    const pages: Page[] = [];
+    const picks: Array<[number, number, number]> = [];
+    for (const [a, b] of segs) {
+      const page = fitPage(this.heads, a, b, this.fps);
+      if (!page) continue;
+      pages.push(page);
+      picks.push([0.2, 0.5, 0.8].map((q) => Math.round(a + (b - a) * q)) as [number, number, number]);
+    }
+    return { pages, picks };
   }
-  const segs = segmentPages(flip.map((f) => (f ? 1 : 0)), fps, 0.5);
-  onProgress?.(`${segs.length} pages`);
-  const pages: Page[] = [];
+}
+
+/** Notes of every page (from its composite frame), merged across page flips, as tracks. */
+export function notesFromPages(pages: Page[], composites: RgbFrame[], cfg: PianoRollConfig): ReadResult {
   const notes: RollNote[] = [];
-  for (const [a, b] of segs) {
-    const page = trackPlayhead(get, a, b, fps, cfg.roi);
-    if (!page) continue;
-    pages.push(page);
-    const pick = (q: number) => get(Math.round(a + (b - a) * q));
-    const comp = median3(pick(0.2), pick(0.5), pick(0.8));
+  pages.forEach((page, pi) => {
     const tOf = (x: number) => page.t0 + (x - page.x0) / page.v;
-    for (const n of extractNotes(comp, cfg)) {
+    for (const n of extractNotes(composites[pi], cfg)) {
       notes.push({
         track: n.track,
         pitch: n.pitch,
@@ -354,9 +401,7 @@ export function readPianoRollVideo(get: FrameSource, count: number, fps: number,
         cutRight: n.x1 >= cfg.roi.x1 - 1,
       });
     }
-    onProgress?.(`page ${pages.length}: ${(page.v).toFixed(1)} px/s, ${page.playheadSamples} playhead samples`);
-  }
-  // merge notes split across page boundaries
+  });
   const merged: RollNote[] = [];
   for (const n of notes.sort((p, q) => p.start - q.start)) {
     if (n.cutLeft) {
@@ -382,4 +427,271 @@ export function readPianoRollVideo(get: FrameSource, count: number, fps: number,
     ),
   }));
   return { tracks: tracks.filter((t) => t.notes.length > 0), pages, rawNotes: merged };
+}
+
+/** Full pipeline over random-access frames (scripts/tests). Browser code streams via RollScanner. */
+export function readPianoRollVideo(get: FrameSource, count: number, fps: number, cfg: PianoRollConfig, onProgress?: (msg: string) => void): ReadResult {
+  const sc = new RollScanner(cfg, fps);
+  for (let i = 0; i < count; i++) sc.push(get(i));
+  const { pages, picks } = sc.finish();
+  onProgress?.(`${pages.length} pages`);
+  const comps = picks.map(([a, b, c]) => median3(get(a), get(b), get(c)));
+  return notesFromPages(pages, comps, cfg);
+}
+
+// ---------------------------------------------------------------------------
+// Calibration helpers (used by the UI to set up a reader in a few clicks)
+// ---------------------------------------------------------------------------
+
+/** Pixels that look like notes: saturated and bright. */
+function isNotePixel(r: number, g: number, b: number, minS = 0.2, minV = 0.45) {
+  const [, s, v] = rgbToHsv(r, g, b);
+  return s >= minS && v >= minV;
+}
+
+export interface RowGrid {
+  semitonePx: number;
+  /** y of one row centre (any row). */
+  rowCenterY: number;
+  /** Pitch class (0 = C) of the row at rowCenterY, from the black/white key shading. */
+  pitchClass: number | null;
+  /** 0..1: how periodic the background is. */
+  confidence: number;
+  /** -1..1: how well the rows match the keyboard's black/white pattern. */
+  keyPatternMatch: number;
+}
+
+/**
+ * Row grid from the editor's background: piano rolls shade black-key rows
+ * (Domino, FL Studio, Cubase, Studio One…), so the background repeats every
+ * octave. That gives the semitone spacing, the row phase, and the pitch class
+ * of every row — only the octave is left to choose.
+ */
+export function detectRowGrid(frames: RgbFrame[], roi: Rect4): RowGrid | null {
+  const H = roi.y1 - roi.y0;
+  const sum = new Float64Array(H);
+  const cnt = new Float64Array(H);
+  for (const f of frames)
+    for (let y = roi.y0; y < roi.y1; y++)
+      for (let x = roi.x0; x < roi.x1; x += 2) {
+        const [r, g, b] = px(f, x, y);
+        const [, sat, v] = rgbToHsv(r, g, b);
+        if (sat < 0.12) {
+          sum[y - roi.y0] += v;
+          cnt[y - roi.y0]++;
+        }
+      }
+  const bg = Array.from(sum, (v, i) => (cnt[i] ? v / cnt[i] : NaN));
+  const valid = bg.filter((v) => !Number.isNaN(v));
+  if (valid.length < H * 0.5) return null;
+  const mean = valid.reduce((a, b) => a + b, 0) / valid.length;
+  const p = bg.map((v) => (Number.isNaN(v) ? 0 : v - mean));
+  const dft = (period: number) => {
+    let re = 0;
+    let im = 0;
+    for (let y = 0; y < H; y++) {
+      const a = (2 * Math.PI * y) / period;
+      re += p[y] * Math.cos(a);
+      im -= p[y] * Math.sin(a);
+    }
+    return { mag: Math.hypot(re, im), ang: Math.atan2(im, re) };
+  };
+  // octave period: strongest periodicity between 12×3 px and the ROI height / 1.5
+  let octave = 0;
+  let best = 0;
+  let total = 0;
+  let n = 0;
+  for (let O = 36; O <= Math.min(480, H / 1.5); O += 0.1) {
+    const m = dft(O).mag;
+    total += m;
+    n++;
+    if (m > best) [best, octave] = [m, O];
+  }
+  if (!octave) return null;
+  // refine at the semitone harmonic (12× more cycles in the window → far more precise)
+  let semitonePx = octave / 12;
+  let semiMag = 0;
+  for (let P = (octave / 12) * 0.92; P <= (octave / 12) * 1.08; P += 0.002) {
+    const m = dft(P).mag;
+    if (m > semiMag) [semiMag, semitonePx] = [m, P];
+  }
+  // row phase: at the semitone frequency the background peaks mid-row (dark separators at the edges)
+  const { ang } = dft(semitonePx);
+  let rowCenterY = roi.y0 + ((((-ang / (2 * Math.PI)) * semitonePx) % semitonePx) + semitonePx) % semitonePx;
+  // brightness of each row's interior
+  const rows: Array<{ y: number; v: number }> = [];
+  for (let y = rowCenterY; y < roi.y1 - 1; y += semitonePx) {
+    let s2 = 0;
+    let c2 = 0;
+    for (let dy = -semitonePx * 0.25; dy <= semitonePx * 0.25; dy += 0.5) {
+      const v = bg[Math.round(y + dy) - roi.y0];
+      if (!Number.isNaN(v)) {
+        s2 += v;
+        c2++;
+      }
+    }
+    if (c2) rows.push({ y, v: s2 / c2 });
+  }
+  // match the keyboard pattern; rows go DOWN in pitch from the top
+  const WHITE = [1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1]; // C C# D … B
+  let bestPc = 0;
+  let bestCorr = -2;
+  const mv = rows.reduce((a, r) => a + r.v, 0) / Math.max(1, rows.length);
+  for (let pc = 0; pc < 12; pc++) {
+    let num = 0;
+    let da = 0;
+    let db = 0;
+    rows.forEach((r, k) => {
+      const w = WHITE[(((pc - k) % 12) + 12) % 12] - 7 / 12;
+      num += w * (r.v - mv);
+      da += w * w;
+      db += (r.v - mv) ** 2;
+    });
+    const corr = da && db ? num / Math.sqrt(da * db) : 0;
+    if (corr > bestCorr) [bestCorr, bestPc] = [corr, pc];
+  }
+  rowCenterY = rows.length ? rows[0].y : rowCenterY;
+  return {
+    semitonePx,
+    rowCenterY,
+    pitchClass: bestCorr > 0.5 ? bestPc : null,
+    confidence: Math.min(1, best / (3 * (total / n))),
+    keyPatternMatch: bestCorr,
+  };
+}
+
+/**
+ * detectRowGrid over many frames, robust to frames that are not the roll
+ * (title cards, fades, dialogs): per-frame detection, keep the frames whose
+ * rows match the keyboard pattern, take the median spacing and phase.
+ */
+export function detectRowGridConsensus(frames: RgbFrame[], roi: Rect4): RowGrid | null {
+  const per = frames.map((f) => detectRowGrid([f], roi)).filter((g): g is RowGrid => !!g);
+  if (!per.length) return null;
+  const good = per.filter((g) => g.keyPatternMatch > 0.5);
+  const use = good.length ? good : per;
+  const med = (xs: number[]) => xs.slice().sort((a, b) => a - b)[xs.length >> 1];
+  const semitonePx = med(use.map((g) => g.semitonePx));
+  const agree = use.filter((g) => Math.abs(g.semitonePx - semitonePx) / semitonePx < 0.02);
+  // phase: express each frame's row centre relative to the first, modulo the spacing
+  const ref = agree[0].rowCenterY;
+  const phases = agree.map((g) => ref + ((((g.rowCenterY - ref) % semitonePx) + semitonePx * 1.5) % semitonePx) - semitonePx / 2);
+  const rowCenterY = med(phases);
+  // pitch class of that row by vote
+  const votes = new Map<number, number>();
+  for (const g of agree)
+    if (g.pitchClass != null) {
+      const k = Math.round((g.rowCenterY - rowCenterY) / semitonePx);
+      const pc = (((g.pitchClass + k) % 12) + 12) % 12;
+      votes.set(pc, (votes.get(pc) ?? 0) + 1);
+    }
+  const pitchClass = votes.size ? [...votes.entries()].sort((a, b) => b[1] - a[1])[0][0] : null;
+  return {
+    semitonePx,
+    rowCenterY,
+    pitchClass,
+    confidence: agree.length / per.length,
+    keyPatternMatch: med(agree.map((g) => g.keyPatternMatch)),
+  };
+}
+
+export interface HueCluster {
+  hueFrom: number;
+  hueTo: number;
+  /** Representative colour, for display. */
+  rgb: [number, number, number];
+  share: number;
+  /** Mostly thin vertical lines (bar lines / grid), not notes. */
+  likelyGrid: boolean;
+}
+
+/** Suggest one hue range per track from the colours present in the note area. */
+export function suggestTrackHues(frames: RgbFrame[], roi: Rect4): HueCluster[] {
+  const BINS = 72; // 5° bins
+  const hist = new Float64Array(BINS);
+  const sums = Array.from({ length: BINS }, () => [0, 0, 0]);
+  const vRun = new Float64Array(BINS);
+  const hRun = new Float64Array(BINS);
+  let total = 0;
+  for (const f of frames)
+    for (let y = roi.y0 + 1; y < roi.y1 - 1; y += 2)
+      for (let x = roi.x0 + 1; x < roi.x1 - 1; x += 2) {
+        const [r, g, b] = px(f, x, y);
+        if (!isNotePixel(r, g, b)) continue;
+        const [h] = rgbToHsv(r, g, b);
+        const k = Math.floor(h / (360 / BINS)) % BINS;
+        hist[k]++;
+        sums[k][0] += r;
+        sums[k][1] += g;
+        sums[k][2] += b;
+        total++;
+        // neighbours of the same colour class: vertical vs horizontal
+        const same = (xx: number, yy: number) => {
+          const [r2, g2, b2] = px(f, xx, yy);
+          return isNotePixel(r2, g2, b2) && Math.abs(rgbToHsv(r2, g2, b2)[0] - h) < 12;
+        };
+        if (same(x, y - 1) && same(x, y + 1)) vRun[k]++;
+        if (same(x - 1, y) && same(x + 1, y)) hRun[k]++;
+      }
+  if (!total) return [];
+  // smooth circularly, find peaks, grow each to its valleys
+  const sm = Array.from(hist, (_, i) => (hist[(i + BINS - 1) % BINS] + 2 * hist[i] + hist[(i + 1) % BINS]) / 4);
+  const out: HueCluster[] = [];
+  const taken = new Uint8Array(BINS);
+  const order = sm.map((v, i) => [v, i] as const).sort((a, b) => b[0] - a[0]);
+  for (const [v, i] of order) {
+    if (taken[i] || v < total * 0.0025) continue;
+    let lo = i;
+    let hi = i;
+    while (!taken[(lo + BINS - 1) % BINS] && sm[(lo + BINS - 1) % BINS] > total * 0.002 && sm[(lo + BINS - 1) % BINS] <= sm[lo] * 1.05 && (i - lo + BINS) % BINS < 10) lo = (lo + BINS - 1) % BINS;
+    while (!taken[(hi + 1) % BINS] && sm[(hi + 1) % BINS] > total * 0.002 && sm[(hi + 1) % BINS] <= sm[hi] * 1.05 && (hi - i + BINS) % BINS < 10) hi = (hi + 1) % BINS;
+    let n = 0;
+    const rgb = [0, 0, 0];
+    let vr = 0;
+    let hr = 0;
+    for (let k = lo; ; k = (k + 1) % BINS) {
+      taken[k] = 1;
+      n += hist[k];
+      for (let c = 0; c < 3; c++) rgb[c] += sums[k][c];
+      vr += vRun[k];
+      hr += hRun[k];
+      if (k === hi) break;
+    }
+    if (n < total * 0.0025) continue;
+    out.push({
+      hueFrom: (lo * 360) / BINS,
+      hueTo: (((hi + 1) * 360) / BINS) % 360 || 360,
+      rgb: rgb.map((c) => Math.round(c / n)) as [number, number, number],
+      share: n / total,
+      likelyGrid: vr > 3 * Math.max(1, hr),
+    });
+  }
+  // widen each range to halfway towards its neighbouring colours (max ±25° from its centre)
+  const centre = (c: HueCluster) => (c.hueFrom + (((c.hueTo - c.hueFrom) % 360) + 360) % 360 / 2) % 360;
+  const byHue = out.map((c) => ({ c, h: centre(c) })).sort((a, b) => a.h - b.h);
+  byHue.forEach(({ c, h }, i) => {
+    if (byHue.length === 1) {
+      c.hueFrom = (h - 25 + 360) % 360;
+      c.hueTo = (h + 25) % 360;
+      return;
+    }
+    const prev = byHue[(i - 1 + byHue.length) % byHue.length].h;
+    const next = byHue[(i + 1) % byHue.length].h;
+    const gapPrev = ((h - prev) % 360 + 360) % 360 || 360;
+    const gapNext = ((next - h) % 360 + 360) % 360 || 360;
+    c.hueFrom = (h - Math.min(25, gapPrev / 2) + 360) % 360;
+    c.hueTo = (h + Math.min(25, gapNext / 2 - 0.01) + 360) % 360;
+  });
+  return out.sort((a, b) => b.share - a.share);
+}
+
+/** Plain colour name for a hue (for default track names). */
+export function hueName(h: number): string {
+  const names: Array<[number, string]> = [[15, 'Red'], [40, 'Orange'], [70, 'Yellow'], [150, 'Green'], [195, 'Cyan'], [255, 'Blue'], [290, 'Purple'], [335, 'Pink'], [360, 'Red']];
+  return names.find(([max]) => h < max)![1];
+}
+
+/** Row centre nearest to y (snap a click to the note grid). */
+export function snapToRow(y: number, grid: { semitonePx: number; rowCenterY: number }): number {
+  return grid.rowCenterY + Math.round((y - grid.rowCenterY) / grid.semitonePx) * grid.semitonePx;
 }

@@ -208,6 +208,8 @@ export interface Project {
   id: Id;
   name: string;
   bpm: number;
+  /** Time (s) of a bar line: the editor grid and quantize are aligned to it. */
+  gridOffset?: number;
   sampleRate: number;
   tracks: NoteTrack[];
   samples: Sample[];

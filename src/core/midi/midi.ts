@@ -174,3 +174,78 @@ export function endTime(tracks: NoteTrack[]): number {
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 const clampPitch = (p: number) => Math.max(0, Math.min(127, p));
+
+/**
+ * Tempo and grid from note timings (e.g. notes read from a video or
+ * transcribed from audio): finds the 16th-note step that best explains the
+ * inter-onset intervals, then least-squares fits the exact step and offset.
+ * `offset` is the time of a grid line (use it as quantize's offset).
+ */
+export function estimateGrid(notes: Note[], opts: { minBpm?: number; maxBpm?: number } = {}): { bpm: number; offset: number; stepError: number } | null {
+  const minBpm = opts.minBpm ?? 70;
+  const maxBpm = opts.maxBpm ?? 200;
+  const starts = [...new Set(notes.map((n) => Math.round(n.start * 1000) / 1000))].sort((a, b) => a - b);
+  if (starts.length < 8) return null;
+  // phase coherence of all starts on a grid of step g (sharp: the whole time span counts)
+  const coherence = (g: number) => {
+    let re = 0;
+    let im = 0;
+    for (const t of starts) {
+      re += Math.cos((2 * Math.PI * t) / g);
+      im += Math.sin((2 * Math.PI * t) / g);
+    }
+    return Math.hypot(re, im) / starts.length;
+  };
+  const gMin = 60 / maxBpm / 4 / 2;
+  const gMax = 60 / minBpm / 4;
+  const span = starts[starts.length - 1] - starts[0];
+  // step resolution fine enough that the grid drifts < 1/8 step over the whole span
+  const ratio = 1 + Math.min(0.002, gMin / (8 * Math.max(span, 1)));
+  const scores: Array<[number, number]> = [];
+  let best = 0;
+  for (let gg = gMin; gg <= gMax; gg *= ratio) {
+    const sc = coherence(gg);
+    scores.push([gg, sc]);
+    best = Math.max(best, sc);
+  }
+  // the largest step that explains (almost) as well as the best: 16ths, not 32nds/64ths
+  let g = Math.max(...scores.filter(([, sc]) => sc >= best * 0.9).map(([gg]) => gg));
+  // local refinement around it
+  let gb = g;
+  let sb = coherence(g);
+  for (let gg = g * 0.995; gg <= g * 1.005; gg *= 1.00005) {
+    const sc = coherence(gg);
+    if (sc > sb) [sb, gb] = [sc, gg];
+  }
+  g = gb;
+  // offset from the phase of the starts on this grid, then least squares on the integer steps
+  let re = 0;
+  let im = 0;
+  for (const s of starts) {
+    re += Math.cos((2 * Math.PI * s) / g);
+    im += Math.sin((2 * Math.PI * s) / g);
+  }
+  let offset = ((Math.atan2(im, re) / (2 * Math.PI)) * g + g) % g;
+  for (let iter = 0; iter < 3; iter++) {
+    const k = starts.map((s) => Math.round((s - offset) / g));
+    const n = k.length;
+    const mk = k.reduce((a, b) => a + b, 0) / n;
+    const ms = starts.reduce((a, b) => a + b, 0) / n;
+    let num = 0;
+    let den = 0;
+    k.forEach((ki, i) => {
+      num += (ki - mk) * (starts[i] - ms);
+      den += (ki - mk) ** 2;
+    });
+    if (!den) break;
+    g = num / den;
+    offset = ms - g * mk;
+  }
+  const err = Math.sqrt(starts.reduce((a, s) => a + (((s - offset) / g - Math.round((s - offset) / g)) ** 2), 0) / starts.length);
+  let bpm = 60 / (g * 4);
+  while (bpm < minBpm) bpm *= 2;
+  while (bpm >= maxBpm * 1.0001) bpm /= 2;
+  const first = starts[0];
+  offset = offset + Math.floor((first - offset) / g + 0.5) * g; // grid line at/near the first note
+  return { bpm, offset, stepError: err };
+}
