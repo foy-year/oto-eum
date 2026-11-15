@@ -450,3 +450,15 @@ describe('video effects, pulses and text', () => {
     expect(textState({ ...o, anim: 'pop' }, 1.05)!.scale).toBeLessThan(1);
   });
 });
+
+describe('loudness normalisation with heavy limiting', () => {
+  it('still lands on a loud target when the limiter works hard', async () => {
+    const { measureLoudness, normalizeLoudness } = await import('../src/core/render/loudness');
+    // spiky material: quiet tone + loud clicks every 0.25 s (high crest factor)
+    const p = sine(220, 6, 48000, 0.05);
+    for (let t = 0; t < 6; t += 0.25) for (let i = 0; i < 400; i++) p.channels[0][Math.round(t * 48000) + i] += Math.exp(-i / 80) * 0.9;
+    const { pcm } = normalizeLoudness(p, -9, -1.5);
+    expect(measureLoudness(pcm).integrated).toBeCloseTo(-9, 0);
+    expect(peak(pcm)).toBeLessThanOrEqual(Math.pow(10, -1.5 / 20) + 1e-4);
+  });
+});

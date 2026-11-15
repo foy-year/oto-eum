@@ -6,7 +6,7 @@
  * `playbackRate` is shared with the audio sampler, picture and sound stay
  * sample-locked — the core trick of 音MAD / YTPMV.
  */
-import type { MediaAsset, Note, NoteTrack, Project, Pulse, Rect, Sample, SyncLayout, TextOverlay, VideoClip, VideoEvent, VideoScene, VideoSyncSettings } from '../types';
+import type { MediaAsset, Note, NoteTrack, Project, Pulse, Rect, Sample, SyncLayout, TextOverlay, VideoClip, VideoEvent, VideoFx, VideoScene, VideoSyncSettings } from '../types';
 import { playbackRate, voiceDuration } from '../render/sampler';
 import { sortNotes, endTime } from '../midi/midi';
 
@@ -240,10 +240,11 @@ export interface VideoScript {
   events: VideoEvent[];
   pulses: Pulse[];
   texts: TextOverlay[];
+  fx: VideoFx[];
 }
 
 export function projectVideoScript(project: Project, assets: MediaAsset[], duration?: number): VideoScript {
-  return { events: projectVideoEvents(project, assets, duration), pulses: projectPulses(project), texts: project.texts ?? [] };
+  return { events: projectVideoEvents(project, assets, duration), pulses: projectPulses(project), texts: project.texts ?? [], fx: project.videoFx ?? [] };
 }
 
 export function quantizeTime(t: number, fps: number): number {

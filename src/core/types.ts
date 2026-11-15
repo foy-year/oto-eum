@@ -197,6 +197,29 @@ export interface Pulse {
   strength: number;
 }
 
+export type VideoFxKind = 'mirror' | 'kaleido' | 'tile' | 'burst' | 'glass' | 'flash' | 'grade';
+
+/**
+ * A time-ranged whole-frame effect (applied after the video events, under the text):
+ * - mirror:  symmetric halves (params.mode 0 = left→right, 1 = top→bottom, 2 = four quarters)
+ * - kaleido: params.segments (even), params.spin (°/s), params.zoom
+ * - tile:    params.n copies per side, alternate mirrored, params.spin (°/s), params.zoom
+ * - burst:   radial speed lines (params.count, params.inner 0..1, params.alpha); colour in `color`
+ * - glass:   shattered-glass rays from the centre (params.count, params.alpha)
+ * - flash:   full-frame flash that decays (params.decay s, params.alpha); colour in `color`
+ * - grade:   colour grade (params.saturate, contrast, brightness, hue °, tint alpha); tint colour in `color`
+ */
+export interface VideoFx {
+  id: Id;
+  kind: VideoFxKind;
+  start: number;
+  end: number;
+  params: Record<string, number>;
+  color?: string;
+  /** Fade in/out (s), default 0.06. */
+  fade?: number;
+}
+
 export interface TextOverlay {
   id: Id;
   text: string;
@@ -301,6 +324,8 @@ export interface Project {
   videoClips: VideoClip[];
   /** Text overlays and title cards. */
   texts?: TextOverlay[];
+  /** Whole-frame effects over time (mirror, kaleidoscope, speed lines, grade…). */
+  videoFx?: VideoFx[];
   /** Normalise the master to this loudness (LUFS), with a true-peak limiter. */
   masterLoudness?: number;
   /** Limiter ceiling for masterLoudness, dBFS (default −1). */

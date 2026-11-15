@@ -135,8 +135,17 @@ export function limit(pcm: Pcm, ceilingDb = -1, opts: { lookahead?: number; rele
 export function normalizeLoudness(pcm: Pcm, targetLufs = -14, ceilingDb = -1): { pcm: Pcm; gainDb: number; before: number } {
   const before = measureLoudness(pcm).integrated;
   if (!Number.isFinite(before)) return { pcm, gainDb: 0, before };
-  const gainDb = Math.max(-40, Math.min(40, targetLufs - before));
-  return { pcm: limit(applyGain(pcm, Math.pow(10, gainDb / 20)), ceilingDb), gainDb, before };
+  // Limiting gives back some loudness, so iterate: push the gain until the limited
+  // result lands on the target (±0.2 LU), within a sane range.
+  let gainDb = Math.max(-40, Math.min(40, targetLufs - before));
+  let out = limit(applyGain(pcm, Math.pow(10, gainDb / 20)), ceilingDb);
+  for (let i = 0; i < 4; i++) {
+    const err = targetLufs - measureLoudness(out).integrated;
+    if (Math.abs(err) < 0.2 || gainDb + err > 40) break;
+    gainDb += err;
+    out = limit(applyGain(pcm, Math.pow(10, gainDb / 20)), ceilingDb);
+  }
+  return { pcm: out, gainDb, before };
 }
 
 /** Loudness of the audible part of a stem (blocks above −70 LUFS, relative gate). */

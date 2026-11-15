@@ -15,7 +15,7 @@ import { createProject, createSample, createTrack } from '../../src/core/project
 import { createEffect } from '../../src/core/render/effects';
 import { autoLevel, mixProject } from '../../src/core/render/mix';
 import { quantize, gridSeconds, shiftTime, endTime } from '../../src/core/midi/midi';
-import type { Note, NoteTrack, Sample, VideoClip } from '../../src/core/types';
+import type { Note, NoteTrack, Sample, VideoClip, VideoFx } from '../../src/core/types';
 
 const W = process.argv[2];
 const src = decodeWav(readFileSync(`${W}/a48.wav`));
@@ -45,7 +45,8 @@ for (let bpm = 160; bpm <= 170; bpm += 0.01) {
 const BPM = Math.round(best.bpm * 10) / 10;
 const beat = 60 / BPM;
 console.log(`tempo ≈ ${best.bpm.toFixed(2)} → ${BPM} BPM, grid offset ${best.off.toFixed(3)} s, rms grid error ${Math.sqrt(best.err / starts.length).toFixed(3)} steps`);
-const LEAD = 0.4; // silence before the first downbeat
+// genre template: ~3 bars of the subject's own footage + sound before the song (like the references)
+const LEAD = 3 * (240 / BPM);
 const songStart = best.off; // first downbeat in the MIDI video's timeline
 const tidy = (notes: Note[]) =>
   shiftTime(quantize(notes, BPM, 16, { offset: songStart }), LEAD - songStart).filter((n) => n.duration > 0.02);
@@ -151,44 +152,79 @@ const OUTRO = { a: 21.0, b: 23.0 };
 const outroSample = createSample('ad', OUTRO.a, OUTRO.b, { name: 'end card', pitchMode: 'fixed', sustain: 'full', fadeIn: 0.01, fadeOut: 0.3 });
 const outroTrack = createTrack('Outro (end card)', { notes: [{ id: 'outro', pitch: 60, start: outroStart, duration: OUTRO.b - OUTRO.a, velocity: 1 }], sampleId: outroSample.id, gain: 0.9 });
 
+// Intro: the ad's opening (man, room, life:) logo, its music) as-is
+const introSample = createSample('ad', 0, LEAD, { name: 'ad opening', pitchMode: 'fixed', sustain: 'full', fadeIn: 0.005, fadeOut: 0.25 });
+const introTrack = createTrack('Intro (ad opening)', { notes: [{ id: 'intro', pitch: 60, start: 0, duration: LEAD, velocity: 1 }], sampleId: introSample.id, gain: 0.9 });
+
 const project = createProject('life:) × YOUKAI ZONE 音MAD');
 project.bpm = BPM;
 project.sampleRate = 48000;
-project.samples = [...Object.values(S), ...Object.values(D), outroSample];
+project.samples = [...Object.values(S), ...Object.values(D), outroSample, introSample];
 const melodic = [tracks.main, tracks.harmony, tracks.wild, tracks.bass, tracks.chorus, tracks.arp];
-project.tracks = [...melodic, ...drumTracks, outroTrack];
+project.tracks = [...melodic, ...drumTracks, outroTrack, introTrack];
 project.videoTrackIds = melodic.map((t) => t.id);
-// scenes: intro = main + bass, band enters = main focus + 4, wild track enters = 3×2 grid
+// ---------------------------------------------------------------------------
+// v4: YOUKAI ZONE template (from 20 reference 音MADs, song-aligned)
+// ---------------------------------------------------------------------------
 const wildStart = Math.min(...tracks.wild.notes.map((n) => n.start));
+const B = (n: number) => LEAD + (n - 1) * bar; // start of song bar n
+const T = tracks;
+const five = [T.main.id, T.harmony.id, T.chorus.id, T.bass.id, T.arp.id];
 project.videoScenes = [
-  { id: 'intro', from: 0, layout: 'columns', order: [tracks.main.id, tracks.bass.id] },
-  { id: 'band', from: firstBar, layout: 'focus', order: [tracks.main.id, tracks.harmony.id, tracks.chorus.id, tracks.bass.id, tracks.arp.id] },
-  { id: 'all', from: wildStart, layout: 'grid', order: [tracks.main.id, tracks.harmony.id, tracks.wild.id, tracks.bass.id, tracks.chorus.id, tracks.arp.id] },
+  { id: 'b1', from: 0, layout: 'single', order: [T.main.id] }, // + mirror FX
+  { id: 'b3', from: B(3), layout: 'columns', order: [T.main.id, T.bass.id] },
+  { id: 'b5', from: B(5), layout: 'focus', order: five },
+  { id: 'b9', from: B(9), layout: 'single', order: [T.main.id] }, // title over the subject
+  // 3 on top + 2 wide below: a 5-cell grid would leave a black gap
+  { id: 'b11', from: B(11), layout: 'custom', order: five, rects: {
+    [T.main.id]: { x: 0, y: 0, w: 1 / 3, h: 0.5 }, [T.harmony.id]: { x: 1 / 3, y: 0, w: 1 / 3, h: 0.5 }, [T.chorus.id]: { x: 2 / 3, y: 0, w: 1 / 3, h: 0.5 },
+    [T.bass.id]: { x: 0, y: 0.5, w: 0.5, h: 0.5 }, [T.arp.id]: { x: 0.5, y: 0.5, w: 0.5, h: 0.5 } } },
+  { id: 'b13', from: Math.min(B(13), wildStart), layout: 'grid', order: [T.main.id, T.harmony.id, T.wild.id, T.bass.id, T.chorus.id, T.arp.id] },
 ];
-project.masterEffects = [createEffect('compressor', { threshold: -14, ratio: 3, attack: 0.003, release: 0.12, makeup: 2 }), createEffect('normalize', { peak: 0.95 })];
 project.videoSync = { ...project.videoSync, width: 1280, height: 720, fps: 30, layout: 'grid', alternateFlip: true, hueByPitch: false, punch: 1.1, flash: 0.3, holdLastFrame: true, background: '#0b0d14' };
-// v2 look: kick pulses the screen, small per-note rotation/shake/drift, held cells go grey
-project.videoSync = { ...project.videoSync, rotate: 4, shake: 0.02, zoomDrift: 0.06, greyHeld: true, pulseTrackIds: [drumTracks[0].id], pulseFlash: 0.14, pulseZoom: 0.03 };
+project.videoSync = { ...project.videoSync, rotate: 4, shake: 0.02, zoomDrift: 0.06, greyHeld: false, pulseTrackIds: [drumTracks[0].id], pulseFlash: 0.14, pulseZoom: 0.03 };
+const fx = (kind: VideoFx['kind'], start: number, end: number, params: Record<string, number> = {}, color?: string, fade?: number): VideoFx => ({ id: `${kind}${start.toFixed(2)}`, kind, start, end, params, color, fade });
+const songOut = Math.ceil((songEnd - LEAD) / bar - 0.1);
+project.videoFx = [
+  // sections
+  fx('mirror', B(1), B(3), { mode: 0 }),
+  fx('tile', B(13), B(15), { n: 2, spin: 0, zoom: 1 }),
+  fx('kaleido', B(15), B(1 + songOut), { segments: 8, spin: 40, zoom: 1.25 }),
+  // colour: vivid overall, warm montage, cool title/grid section
+  fx('grade', 0, B(1 + songOut) + 2.5, { saturate: 1.45, contrast: 1.12, brightness: 1.06 }, undefined, 0),
+  fx('grade', B(5), B(9), { saturate: 1.2, tint: 0.35 }, '#ff8a3d'),
+  fx('grade', B(9), B(13), { saturate: 1.1, tint: 0.4, hue: -10 }, '#28d7ff'),
+  // title burst at bar 9
+  fx('burst', B(9), B(11), { count: 56, inner: 0.34, alpha: 0.75 }, '#ffffff'),
+  fx('glass', B(9), B(11), { count: 9, alpha: 0.85 }),
+  // white flashes on every section change
+  ...[1, 3, 5, 9, 11, 13, 15].map((n) => fx('flash', B(n), B(n) + 0.45, { decay: n === 9 || n === 1 ? 0.22 : 0.12, alpha: n === 9 ? 1 : 0.7 }, '#ffffff')),
+  fx('flash', B(1 + songOut), B(1 + songOut) + 0.5, { decay: 0.2, alpha: 0.9 }, '#ffffff'),
+];
 project.texts = [
-  { id: 'title', text: 'life:) × YOUKAIZONE\n音MAD', start: 0.05, end: 2.6, x: 0.5, y: 0.5, size: 0.1, color: '#ffffff', stroke: '#101522', font: 'rounded', anim: 'pop' },
+  { id: 'yz', text: 'YOUKAI\nZONE »', start: B(9), end: B(11), x: 0.4, y: 0.5, size: 0.085, color: '#ffffff', stroke: '#101522', align: 'right', anim: 'slide', font: 'sans' },
+  { id: 'word', text: 'ライフ', start: B(9) + 0.1, end: B(11), x: 0.43, y: 0.5, size: 0.21, color: '#e8252e', stroke: '#ffffff', align: 'left', anim: 'pop', font: 'serif' },
   { id: 'credit', text: 'MIDI: YOUKAIZONE厳禁リスペクト専用midi · sounds & video: life:) ad · made with oto-eum', start: 0, end: 0, x: 0.5, y: 0.93, size: 0.032, color: '#2b3a5a', anim: 'fade', bold: false },
 ];
 const clip: VideoClip = { id: 'outro', sourceId: 'ad', start: outroStart, sourceIn: OUTRO.a, sourceOut: OUTRO.b, rate: 1, layer: 0, rect: { x: 0, y: 0, w: 1, h: 1 } };
-project.videoClips = [clip];
-project.texts[1].start = outroStart + 0.2;
-project.texts[1].end = outroStart + (OUTRO.b - OUTRO.a) + 0.3;
+const introClip: VideoClip = { id: 'intro', sourceId: 'ad', start: 0, sourceIn: 0, sourceOut: LEAD, rate: 1, layer: 0, rect: { x: 0, y: 0, w: 1, h: 1 } };
+project.videoClips = [introClip, clip];
+project.texts[2].start = outroStart + 0.2;
+project.texts[2].end = outroStart + (OUTRO.b - OUTRO.a) + 0.3;
+void wildStart;
 
 // ---------------------------------------------------------------------------
 // 5. Mix
 // ---------------------------------------------------------------------------
 // auto-level (core): every track to −20 LUFS + its offset; master normalised to −14 LUFS
-const OFFSET: Record<string, number> = { 'Main (family)': 3, 'Harmony (bedroom)': -3, 'Wild (sofa)': 0, 'Bass (intro)': 0, 'Chorus (logo card)': -5, 'Arpeggio (jingle)': -3, Kick: 1, Snare: -2, Hat: -8, 'Outro (end card)': 2 };
+const OFFSET: Record<string, number> = { 'Intro (ad opening)': 2, 'Main (family)': 3, 'Harmony (bedroom)': -3, 'Wild (sofa)': 0, 'Bass (intro)': 0, 'Chorus (logo card)': -5, 'Arpeggio (jingle)': -3, Kick: 1, Snare: -2, Hat: -8, 'Outro (end card)': 2 };
 for (const t of project.tracks) t.levelOffset = OFFSET[t.name] ?? 0;
 const lv = await autoLevel(project, load);
 for (const t of project.tracks) if (lv[t.id]) t.gain = lv[t.id].gain;
-project.masterEffects = [createEffect('compressor', { threshold: -14, ratio: 3, attack: 0.003, release: 0.12, makeup: 2 })];
-project.masterLoudness = -14;
-project.masterCeiling = -1;
+// the references master loud (median ≈ −9 LUFS); limiter keeps peaks at −1 dBTP instead of clipping
+project.masterEffects = [createEffect('compressor', { threshold: -18, ratio: 4, attack: 0.003, release: 0.1, makeup: 3 })];
+project.masterLoudness = -9;
+project.masterCeiling = -1.5; // sample-peak ceiling; leaves room for inter-sample peaks
 const activeRms = (p: Pcm) => {
   const x = toMono(p);
   const win = 2400;

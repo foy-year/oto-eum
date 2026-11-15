@@ -130,6 +130,12 @@ try {
   await tab('Video Editor');
   await page.getByRole('button', { name: 'Generate cuts' }).click();
   await idle();
+  // video FX timeline + "YOUKAI ZONE" title-burst preset (prompt → default word)
+  await page.locator('select').filter({ hasText: '+ Effect at' }).selectOption('kaleido');
+  await page.getByRole('button', { name: '+ Title burst' }).click();
+  await page.waitForSelector('text=/Video FX \\(4\\)/');
+  await page.waitForSelector('text=/Text & titles \\(2\\)/');
+  console.log('video fx + title burst added');
   const clips = await page.locator('.strip-ev.clip').count();
   console.log('beat-cut clips', clips);
   await shot('8-video-editor');

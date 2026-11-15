@@ -1,5 +1,6 @@
 /** Draws one output frame from VideoEvents (+ pulses and texts). Shared by preview and export. */
-import type { Pulse, TextOverlay, VideoEvent, VideoSyncSettings } from '../types';
+import type { Pulse, TextOverlay, VideoEvent, VideoFx, VideoSyncSettings } from '../types';
+import { applyFx } from './fx';
 import { activeAt, framesNeeded, pulseState, visualState } from './timeline';
 import type { FrameProvider } from './frames';
 import { drawText } from './text';
@@ -9,6 +10,7 @@ type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 export interface FrameExtras {
   pulses?: Pulse[];
   texts?: TextOverlay[];
+  fx?: VideoFx[];
 }
 
 export function drawFrame(
@@ -74,6 +76,7 @@ export function drawFrame(
     ctx.fillRect(0, 0, W, H);
     ctx.restore();
   }
+  applyFx(ctx, extras.fx, t);
   for (const o of extras.texts ?? []) drawText(ctx, o, t);
   return missing;
 }

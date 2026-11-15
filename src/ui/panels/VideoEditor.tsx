@@ -3,6 +3,7 @@ import { job, loadPcm, useStore } from '../store';
 import { Check, Num, Pick, Row, Section, fmt } from '../widgets';
 import { projectVideoScript } from '../../core/video/timeline';
 import { TextEditor } from './TextEditor';
+import { FxEditor } from './FxEditor';
 import { endTime } from '../../core/midi/midi';
 import { detectOnsets } from '../../core/analysis/onset';
 import { type VideoClip, uid } from '../../core/types';
@@ -150,6 +151,7 @@ export function VideoEditor() {
           </button>
         </Row>
       </Section>
+      <FxEditor now={now} />
       <TextEditor now={now} />
       <Section title="Preview & export">
         <VideoPreview events={events} extras={script} settings={project.videoSync} getAudio={() => renderMix()} name={project.name} onTime={setNow} />
