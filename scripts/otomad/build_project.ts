@@ -163,8 +163,16 @@ project.videoScenes = [
 ];
 project.masterEffects = [createEffect('compressor', { threshold: -14, ratio: 3, attack: 0.003, release: 0.12, makeup: 2 }), createEffect('normalize', { peak: 0.95 })];
 project.videoSync = { ...project.videoSync, width: 1280, height: 720, fps: 30, layout: 'grid', alternateFlip: true, hueByPitch: false, punch: 1.1, flash: 0.3, holdLastFrame: true, background: '#0b0d14' };
+// v2 look: kick pulses the screen, small per-note rotation/shake/drift, held cells go grey
+project.videoSync = { ...project.videoSync, rotate: 4, shake: 0.02, zoomDrift: 0.06, greyHeld: true, pulseTrackIds: [drumTracks[0].id], pulseFlash: 0.14, pulseZoom: 0.03 };
+project.texts = [
+  { id: 'title', text: 'life:) × YOUKAIZONE\n音MAD', start: 0.05, end: 2.6, x: 0.5, y: 0.5, size: 0.1, color: '#ffffff', stroke: '#101522', font: 'rounded', anim: 'pop' },
+  { id: 'credit', text: 'MIDI: YOUKAIZONE厳禁リスペクト専用midi · sounds & video: life:) ad · made with oto-eum', start: 0, end: 0, x: 0.5, y: 0.93, size: 0.032, color: '#2b3a5a', anim: 'fade', bold: false },
+];
 const clip: VideoClip = { id: 'outro', sourceId: 'ad', start: outroStart, sourceIn: OUTRO.a, sourceOut: OUTRO.b, rate: 1, layer: 0, rect: { x: 0, y: 0, w: 1, h: 1 } };
 project.videoClips = [clip];
+project.texts[1].start = outroStart + 0.2;
+project.texts[1].end = outroStart + (OUTRO.b - OUTRO.a) + 0.3;
 
 // ---------------------------------------------------------------------------
 // 5. Mix

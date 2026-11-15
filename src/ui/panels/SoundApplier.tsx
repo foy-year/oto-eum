@@ -4,6 +4,7 @@ import { Check, Num, Pick, Row, Section } from '../widgets';
 import { autoLevel, mixProject } from '../../core/render/mix';
 import type { LoudnessResult } from '../../core/render/loudness';
 import { exportAudio } from '../../core/video/export';
+import { SelfCheck } from './SelfCheck';
 import { encodeWav } from '../../core/audio/wav';
 import { type Pcm, durationOf } from '../../core/audio/pcm';
 import { midiToName } from '../../core/analysis/pitch';
@@ -166,6 +167,7 @@ export function SoundApplier() {
           <span className="hint">{label}</span>
         </Row>
       </Section>
+      <SelfCheck />
     </div>
   );
 }

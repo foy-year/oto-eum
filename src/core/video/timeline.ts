@@ -6,7 +6,7 @@
  * `playbackRate` is shared with the audio sampler, picture and sound stay
  * sample-locked — the core trick of 音MAD / YTPMV.
  */
-import type { MediaAsset, Note, NoteTrack, Project, Rect, Sample, SyncLayout, VideoClip, VideoEvent, VideoScene, VideoSyncSettings } from '../types';
+import type { MediaAsset, Note, NoteTrack, Project, Pulse, Rect, Sample, SyncLayout, TextOverlay, VideoClip, VideoEvent, VideoScene, VideoSyncSettings } from '../types';
 import { playbackRate, voiceDuration } from '../render/sampler';
 import { sortNotes, endTime } from '../midi/midi';
 
@@ -97,7 +97,12 @@ export function buildSyncEvents(input: SyncInput): VideoEvent[] {
         overrun: sample.sustain === 'loop' ? 'loop' : 'hold',
         layer: st.layout === 'single' ? 0 : ti,
         rect: rects[ti],
-        flipX: st.alternateFlip ? ni % 2 === 1 : false,
+        ...flipFor(st, ni, n.start),
+        rotate: st.rotate ? (ni % 2 ? -1 : 1) * st.rotate : undefined,
+        shake: st.shake || undefined,
+        zoomDrift: st.zoomDrift || undefined,
+        holdFrom: n.start + Math.min(sounding, end - n.start),
+        greyHeld: st.greyHeld || undefined,
         hue: st.hueByPitch ? ((((n.pitch - sample.rootPitch) * 30) % 360) + 360) % 360 : 0,
         punch: st.punch,
         punchDecay: 0.12,
@@ -107,6 +112,28 @@ export function buildSyncEvents(input: SyncInput): VideoEvent[] {
     });
   });
   return events;
+}
+
+/** Deterministic 0..1 hash (same input → same "random" flip/shake). */
+export function hash01(x: number): number {
+  const s = Math.sin(x * 12.9898 + 78.233) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+function flipFor(st: VideoSyncSettings, i: number, start: number): { flipX?: boolean; flipY?: boolean } {
+  const mode = st.flipMode ?? (st.alternateFlip ? 'alternate' : 'none');
+  switch (mode) {
+    case 'alternate':
+      return { flipX: i % 2 === 1 };
+    case 'vertical':
+      return { flipY: i % 2 === 1 };
+    case 'both':
+      return { flipX: i % 2 === 1, flipY: Math.floor(i / 2) % 2 === 1 };
+    case 'random':
+      return { flipX: hash01(start * 7.1) > 0.5, flipY: hash01(start * 3.3) > 0.75 };
+    default:
+      return {};
+  }
 }
 
 export function clipsToEvents(clips: VideoClip[]): VideoEvent[] {
@@ -161,16 +188,62 @@ export function activeAt(events: VideoEvent[], t: number): ActiveEvent[] {
   return out.sort((a, b) => a.ev.layer - b.ev.layer || a.ev.start - b.ev.start);
 }
 
-/** Per-frame visual modulation (zoom punch, flash, fade). */
-export function visualState(a: ActiveEvent): { scale: number; flash: number; opacity: number } {
+/** Per-frame visual modulation (zoom punch + drift, flash, fade, shake, held greyscale). */
+export function visualState(a: ActiveEvent): { scale: number; flash: number; opacity: number; dx: number; dy: number; grey: boolean } {
   const { ev, age } = a;
   const decay = ev.punchDecay ?? 0.12;
   const k = decay > 0 ? Math.exp(-age / decay) : 0;
-  const scale = 1 + ((ev.punch ?? 1) - 1) * k;
+  const t = ev.start + age;
+  const soundEnd = ev.holdFrom ?? ev.end;
+  const drift = ev.zoomDrift ? ev.zoomDrift * Math.min(1, age / Math.max(0.05, soundEnd - ev.start)) : 0;
+  const scale = (1 + ((ev.punch ?? 1) - 1) * k) * (1 + drift);
   const flash = (ev.flash ?? 0) * k;
   let opacity = ev.opacity ?? 1;
-  if (ev.fadeOut) opacity *= Math.min(1, Math.max(0, (ev.end - (ev.start + age)) / ev.fadeOut));
-  return { scale, flash, opacity };
+  if (ev.fadeOut) opacity *= Math.min(1, Math.max(0, (ev.end - t) / ev.fadeOut));
+  const sh = (ev.shake ?? 0) * k;
+  const dx = sh ? sh * (hash01(Math.floor(t * 60) + ev.start) * 2 - 1) : 0;
+  const dy = sh ? sh * (hash01(Math.floor(t * 60) * 1.7 + ev.start) * 2 - 1) : 0;
+  return { scale, flash, opacity, dx, dy, grey: !!ev.greyHeld && t >= soundEnd };
+}
+
+/** Screen-wide pulse state at time t (sum of decaying hits). */
+export function pulseState(pulses: Pulse[], t: number, s: Pick<VideoSyncSettings, 'pulseFlash' | 'pulseZoom' | 'pulseShake'>): { flash: number; zoom: number; dx: number; dy: number } {
+  let k = 0;
+  let last = -1;
+  for (const p of pulses) {
+    if (p.time > t) break;
+    const age = t - p.time;
+    if (age < 0.6) {
+      k = Math.max(k, p.strength * Math.exp(-age / 0.09));
+      last = p.time;
+    }
+  }
+  const sh = (s.pulseShake ?? 0) * k;
+  return {
+    flash: (s.pulseFlash ?? 0.25) * k,
+    zoom: 1 + (s.pulseZoom ?? 0.04) * k,
+    dx: sh ? sh * (hash01(Math.floor(t * 60) + last) * 2 - 1) : 0,
+    dy: sh ? sh * (hash01(Math.floor(t * 60) * 1.3 + last) * 2 - 1) : 0,
+  };
+}
+
+export function projectPulses(project: Project): Pulse[] {
+  const ids = project.videoSync.pulseTrackIds ?? [];
+  return project.tracks
+    .filter((t) => ids.includes(t.id) && !t.muted)
+    .flatMap((t) => t.notes.map((n) => ({ time: n.start, strength: n.velocity })))
+    .sort((a, b) => a.time - b.time);
+}
+
+/** Everything the compositor needs for a project: events, pulses, texts. */
+export interface VideoScript {
+  events: VideoEvent[];
+  pulses: Pulse[];
+  texts: TextOverlay[];
+}
+
+export function projectVideoScript(project: Project, assets: MediaAsset[], duration?: number): VideoScript {
+  return { events: projectVideoEvents(project, assets, duration), pulses: projectPulses(project), texts: project.texts ?? [] };
 }
 
 export function quantizeTime(t: number, fps: number): number {

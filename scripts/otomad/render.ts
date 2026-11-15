@@ -3,7 +3,7 @@
  * using the toolkit's video sync (incl. scenes) + WebCodecs exporter. Driven by render.mjs.
  */
 import { decodeWav } from '../../src/core/audio/wav';
-import { projectVideoEvents } from '../../src/core/video/timeline';
+import { projectVideoScript } from '../../src/core/video/timeline';
 import { MediaFrameProvider } from '../../src/core/video/frames';
 import { exportVideo } from '../../src/core/video/export';
 import type { MediaAsset, Project } from '../../src/core/types';
@@ -16,7 +16,8 @@ async function run() {
   const mix = decodeWav(new Uint8Array(await (await fetch('/otomad/mix.wav')).arrayBuffer()));
   const asset: MediaAsset = { id: 'ad', name: 'ad', kind: 'video', mime: 'video/mp4', size: video.size, duration: 23, createdAt: 0 };
   // scenes, layouts and the outro clip all come from the project (core: projectVideoEvents → applyScenes)
-  const events = projectVideoEvents(project, [asset], meta.outroStart);
+  const script = projectVideoScript(project, [asset], meta.outroStart);
+  const events = script.events;
 
   const frames = new MediaFrameProvider(async () => video, { maxWidth: 640, maxHeight: 360, capacity: 2000 });
   const t0 = performance.now();
@@ -27,6 +28,7 @@ async function run() {
     duration: meta.total,
     frames,
     prefer: 'mp4',
+    extras: script,
     onProgress: (f) => ((document.title = `render ${(f * 100).toFixed(0)}%`), void 0),
   });
   await fetch('/otomad/upload', { method: 'POST', body: res.blob });

@@ -349,3 +349,104 @@ describe('loudness & mix helpers', () => {
     expect(measureLoudness(stems[project.tracks[1].id]).integrated).toBeCloseTo(-17, 0);
   });
 });
+
+describe('self-check', () => {
+  it('finds a detuned sample and proposes the right root fix', async () => {
+    const { checkProject } = await import('../src/core/render/check');
+    const project = createProject();
+    project.sampleRate = 44100;
+    // the source is 440 Hz but the sample claims root A4 +0: make the source 30 cents sharp instead
+    const sharp = sine(440 * Math.pow(2, 0.3 / 12), 1);
+    const s = createSample('src', 0, 1, { rootPitch: 69, sustain: 'cut' });
+    project.samples.push(s);
+    project.tracks.push(createTrack('lead', { sampleId: s.id, notes: [note(69, 0, 0.4), note(72, 0.5, 0.4), note(76, 1, 0.4), note(74, 1.5, 0.4)] }));
+    const res = await checkProject(project, async () => sharp);
+    const t = res.tracks[0];
+    expect(t.pitch!.checked).toBe(4);
+    expect(t.fixCents).toBeGreaterThan(20);
+    expect(t.fixCents).toBeLessThan(40);
+    // apply the fix → clean
+    project.samples[0].rootCents = t.fixCents;
+    const again = await checkProject(project, async () => sharp);
+    expect(again.tracks[0].issues).toEqual([]);
+    expect(again.tracks[0].midiMatch).toBeGreaterThan(0.8);
+  });
+});
+
+describe('drum kit', () => {
+  it('classifies kick, snare and hat transients', async () => {
+    const { findDrumHits } = await import('../src/core/analysis/drums');
+    const sr = 44100;
+    const p = createPcm(sr, 1, sr * 3);
+    const x = p.channels[0];
+    let seed = 1;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 2 - 1;
+    const put = (t: number, f: (i: number) => number, len: number) => {
+      for (let i = 0; i < len * sr; i++) x[Math.round(t * sr) + i] += f(i);
+    };
+    put(0.5, (i) => Math.sin((2 * Math.PI * 55 * i) / sr) * Math.exp(-i / (0.08 * sr)) * 0.9, 0.3); // kick
+    put(1.3, (i) => (rnd() * 0.6 + Math.sin((2 * Math.PI * 200 * i) / sr) * 0.2) * Math.exp(-i / (0.05 * sr)), 0.25); // snare
+    let prev = 0;
+    put(2.1, (i) => {
+      const n = rnd();
+      const hp = n - prev; // crude high-pass → hat
+      prev = n;
+      return hp * 0.5 * Math.exp(-i / (0.012 * sr));
+    }, 0.08);
+    const hits = findDrumHits(p, { perKind: 1 });
+    expect(hits.kick[0].time).toBeCloseTo(0.5, 1);
+    expect(hits.snare[0].time).toBeCloseTo(1.3, 1);
+    expect(hits.hat[0].time).toBeCloseTo(2.1, 1);
+  });
+
+  it('generates patterns on the grid', async () => {
+    const { drumPattern } = await import('../src/core/analysis/drums');
+    const d = drumPattern('four', { bpm: 120, from: 1.0, to: 3.0, gridOffset: 0.5 });
+    // grid lines every 0.125 s from 0.5; bars start at 0.5, 2.5 → kicks every beat (0.5 s)
+    expect(d.kick.map((n) => n.start)).toEqual([1.0, 1.5, 2.0, 2.5].map((t) => expect.closeTo(t, 6)) as never);
+    expect(d.snare.map((n) => +n.start.toFixed(3))).toEqual([1.0, 2.0]);
+    expect(d.hat.length).toBe(4);
+  });
+});
+
+describe('video effects, pulses and text', () => {
+  it('applies flip modes, rotation, shake decay and held greyscale', async () => {
+    const { buildSyncEvents, visualState, activeAt, DEFAULT_SYNC } = await import('../src/core/video/timeline');
+    const s = createSample('v', 0, 0.2, { rootPitch: 60 });
+    const tr = createTrack('t', { sampleId: s.id, notes: [note(60, 0, 0.5), note(60, 1, 0.5), note(60, 2, 0.5)] });
+    const settings = { ...DEFAULT_SYNC, flipMode: 'vertical' as const, rotate: 8, shake: 0.05, greyHeld: true };
+    const ev = buildSyncEvents({ tracks: [tr], samples: [s], assets: [{ id: 'v', kind: 'video', duration: 1 }], settings });
+    expect(ev.map((e) => !!e.flipY)).toEqual([false, true, false]);
+    expect(ev.map((e) => e.rotate)).toEqual([8, -8, 8]);
+    const at = (t: number) => visualState(activeAt(ev, t)[0]);
+    expect(Math.abs(at(0.01).dx) + Math.abs(at(0.01).dy)).toBeGreaterThan(0);
+    expect(Math.abs(at(0.9).dx)).toBeLessThan(0.001); // decayed
+    expect(at(0.1).grey).toBe(false); // sounding (0.2 s sample)
+    expect(at(0.7).grey).toBe(true); // holding the last frame
+    expect(at(0.01)).toEqual(at(0.01)); // deterministic
+  });
+
+  it('builds screen pulses from chosen tracks', async () => {
+    const { projectPulses, pulseState } = await import('../src/core/video/timeline');
+    const p = createProject();
+    const kick = createTrack('kick', { notes: [note(60, 1, 0.1, 1), note(60, 2, 0.1, 0.5)] });
+    p.tracks.push(kick, createTrack('other', { notes: [note(60, 1.5, 0.1)] }));
+    p.videoSync = { ...p.videoSync, pulseTrackIds: [kick.id], pulseFlash: 0.4, pulseZoom: 0.1 };
+    const pulses = projectPulses(p);
+    expect(pulses.map((x) => x.time)).toEqual([1, 2]);
+    expect(pulseState(pulses, 1.0, p.videoSync).flash).toBeCloseTo(0.4);
+    expect(pulseState(pulses, 1.5, p.videoSync).flash).toBeLessThan(0.01);
+    expect(pulseState(pulses, 2.0, p.videoSync).zoom).toBeCloseTo(1.05);
+  });
+
+  it('animates text overlays', async () => {
+    const { textState } = await import('../src/core/video/text');
+    const o = { id: 'x', text: 'こんにちは', start: 1, end: 3, x: 0.5, y: 0.5, size: 0.1, color: '#fff' };
+    expect(textState({ ...o, anim: 'fade' }, 0.5)).toBeNull();
+    expect(textState({ ...o, anim: 'fade' }, 1.1)!.alpha).toBeCloseTo(0.4);
+    expect(textState({ ...o, anim: 'fade' }, 2)!.alpha).toBe(1);
+    expect(textState({ ...o, anim: 'type' }, 1.2)!.chars).toBeLessThan(5);
+    expect(textState({ ...o, anim: 'type' }, 2.5)!.chars).toBe(5); // counts characters, not UTF-16 units
+    expect(textState({ ...o, anim: 'pop' }, 1.05)!.scale).toBeLessThan(1);
+  });
+});

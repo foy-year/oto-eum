@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from 'react';
 import { job, loadPcm, useStore } from '../store';
 import { Check, Num, Pick, Row, Section, fmt } from '../widgets';
-import { projectVideoEvents } from '../../core/video/timeline';
+import { projectVideoScript } from '../../core/video/timeline';
+import { TextEditor } from './TextEditor';
 import { endTime } from '../../core/midi/midi';
 import { detectOnsets } from '../../core/analysis/onset';
 import { type VideoClip, uid } from '../../core/types';
@@ -31,7 +32,9 @@ export function VideoEditor() {
   const [sens, setSens] = useState(1.5);
   const strip = useRef<HTMLDivElement>(null);
 
-  const events = useMemo(() => projectVideoEvents(project, assets, endTime(project.tracks)), [project, assets]);
+  const script = useMemo(() => projectVideoScript(project, assets, endTime(project.tracks)), [project, assets]);
+  const events = script.events;
+  const [now, setNow] = useState(0);
   const total = Math.max(1, ...events.map((e) => e.end));
   const clips = project.videoClips;
   const sel = clips.find((c) => c.id === selId);
@@ -147,8 +150,9 @@ export function VideoEditor() {
           </button>
         </Row>
       </Section>
+      <TextEditor now={now} />
       <Section title="Preview & export">
-        <VideoPreview events={events} settings={project.videoSync} getAudio={() => renderMix()} name={project.name} />
+        <VideoPreview events={events} extras={script} settings={project.videoSync} getAudio={() => renderMix()} name={project.name} onTime={setNow} />
       </Section>
     </div>
   );

@@ -9,6 +9,7 @@ import { prepareSample, renderTrack } from '../../core/render/sampler';
 import type { Sample } from '../../core/types';
 import { play, stop } from '../player';
 import { SampleFinder } from './SampleFinder';
+import { DrumKit } from './DrumKit';
 import { analyzeF0, flattenPitch } from '../../core/render/psola';
 
 /** Pitch over the sample: grey = original, green = after flattening; dashed = root note. */
@@ -162,6 +163,7 @@ export function SoundEditor() {
       </Section>
 
       <SampleFinder asset={asset} pcm={pcm} onRegions={setFinds} />
+      <DrumKit asset={asset} pcm={pcm} />
 
       <Section title={`Samples from this source (${samples.length})`}>
         <table className="list">

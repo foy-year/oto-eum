@@ -83,3 +83,5 @@ textarea { font: inherit; color: inherit; background: #222838; border: 1px solid
 .cand .row { margin: 0; gap: 4px; }
 .meter { height: 4px; background: #222838; border-radius: 2px; overflow: hidden; }
 .meter span { display: block; height: 100%; background: var(--accent); }
+.drumcols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.drumcols > div { display: flex; flex-direction: column; gap: 4px; }

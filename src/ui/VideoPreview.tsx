@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { VideoEvent, VideoSyncSettings } from '../core/types';
-import { drawFrame, prepareRange } from '../core/video/compositor';
+import { drawFrame, prepareRange, type FrameExtras } from '../core/video/compositor';
 import { MediaFrameProvider } from '../core/video/frames';
 import { exportVideo } from '../core/video/export';
 import { type Pcm, durationOf } from '../core/audio/pcm';
@@ -19,14 +19,14 @@ export function previewFrames(): MediaFrameProvider {
  * Canvas preview of a list of VideoEvents, synchronised to the audio clock,
  * plus frame-exact export.
  */
-export function VideoPreview(props: { events: VideoEvent[]; settings: VideoSyncSettings; getAudio: () => Promise<Pcm | null>; name: string; onTime?: (t: number) => void }) {
+export function VideoPreview(props: { events: VideoEvent[]; settings: VideoSyncSettings; getAudio: () => Promise<Pcm | null>; name: string; onTime?: (t: number) => void; extras?: FrameExtras }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('');
   const abort = useRef<AbortController | null>(null);
-  const duration = Math.max(0.1, ...props.events.map((e) => e.end));
+  const duration = Math.max(0.1, ...props.events.map((e) => e.end), ...(props.extras?.texts ?? []).map((x) => x.end));
   const { width, height } = props.settings;
   const previewW = 640;
   const previewH = Math.round((previewW * height) / width);
@@ -36,7 +36,7 @@ export function VideoPreview(props: { events: VideoEvent[]; settings: VideoSyncS
   const draw = (time: number) => {
     const c = canvas.current;
     if (!c) return 0;
-    return drawFrame(c.getContext('2d')!, props.events, time, previewFrames(), props.settings);
+    return drawFrame(c.getContext('2d')!, props.events, time, previewFrames(), props.settings, props.extras);
   };
 
   // still-frame preview when scrubbing
@@ -49,7 +49,7 @@ export function VideoPreview(props: { events: VideoEvent[]; settings: VideoSyncS
     return () => {
       cancelled = true;
     };
-  }, [t, props.events, props.settings, playing]);
+  }, [t, props.events, props.settings, props.extras, playing]);
 
   // playback loop: audio clock drives the picture; decode ahead in 2 s chunks
   useEffect(() => {
@@ -113,6 +113,7 @@ export function VideoPreview(props: { events: VideoEvent[]; settings: VideoSyncS
                   audio: audio ?? undefined,
                   duration: Math.max(duration, audio ? durationOf(audio) : 0),
                   frames,
+                  extras: props.extras,
                   onProgress: setProgress,
                   signal: abort.current.signal,
                 });

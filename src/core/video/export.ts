@@ -18,7 +18,7 @@ import {
 } from 'mediabunny';
 import { type Pcm, durationOf, slice, toAudioBuffer } from '../audio/pcm';
 import type { VideoEvent, VideoSyncSettings } from '../types';
-import { drawFrame, prepareRange } from './compositor';
+import { drawFrame, prepareRange, type FrameExtras } from './compositor';
 import type { FrameProvider } from './frames';
 
 export interface ExportOptions {
@@ -27,6 +27,8 @@ export interface ExportOptions {
   audio?: Pcm;
   duration?: number;
   frames: FrameProvider & { open?: (id: string) => Promise<unknown> };
+  /** Screen-wide pulses and text overlays. */
+  extras?: FrameExtras;
   /** Seconds decoded per batch — bounds memory use. */
   chunk?: number;
   prefer?: 'mp4' | 'webm';
@@ -67,7 +69,7 @@ export async function exportVideo(o: ExportOptions): Promise<ExportResult> {
   const { width, height, fps } = o.settings;
   const W = width - (width % 2);
   const H = height - (height % 2);
-  const duration = o.duration ?? Math.max(o.audio ? durationOf(o.audio) : 0, ...o.events.map((e) => e.end), 0.1);
+  const duration = o.duration ?? Math.max(o.audio ? durationOf(o.audio) : 0, ...o.events.map((e) => e.end), ...(o.extras?.texts ?? []).map((x) => x.end), 0.1);
   const fmt = await pickFormat(o.prefer ?? 'mp4', W, H, fps, !!o.audio);
 
   const canvas = new OffscreenCanvas(W, H);
@@ -97,7 +99,7 @@ export async function exportVideo(o: ExportOptions): Promise<ExportResult> {
     await prepareRange(o.events, o.frames, c0, c1, fps);
     for (let f = Math.ceil(c0 * fps); f < Math.ceil(c1 * fps) && f < total; f++) {
       const t = f / fps;
-      drawFrame(ctx, o.events, t, o.frames, o.settings);
+      drawFrame(ctx, o.events, t, o.frames, o.settings, o.extras);
       await videoSource.add(t, 1 / fps);
       o.onProgress?.(f / total);
     }

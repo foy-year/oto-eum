@@ -153,16 +153,50 @@ export function alignNotesToAudio(notes: Note[], audio: Pcm, opts: { timeOffset?
  * For notes that sound alone (no overlap within the track), how close is the
  * rendered audio to the written pitch? Returns errors in semitones (pitch class).
  */
-export function pitchAccuracy(rendered: Pcm, notes: Note[], opts: { minDuration?: number } = {}): { checked: number; medianError: number; within50cents: number } {
+export function pitchAccuracy(rendered: Pcm, notes: Note[], opts: { minDuration?: number } = {}): { checked: number; medianError: number; within50cents: number; medianSigned: number } {
   const errs: number[] = [];
+  const signed: number[] = [];
   const minD = opts.minDuration ?? 0.12;
   for (const n of notes) {
     if (n.duration < minD) continue;
     if (notes.some((m) => m !== n && m.start < n.start + n.duration && m.start + m.duration > n.start)) continue;
     const a = n.start + 0.02;
     const r = detectRootPitch(slice(rendered, a, a + Math.min(0.2, n.duration - 0.04)), { minHz: 40, maxHz: 2500, threshold: 0.2 });
-    if (r) errs.push(Math.abs(((((r.midi - n.pitch + 6) % 12) + 12) % 12) - 6));
+    if (r) {
+      const d = ((((r.midi - n.pitch + 6) % 12) + 12) % 12) - 6;
+      errs.push(Math.abs(d));
+      signed.push(d);
+    }
   }
   errs.sort((x, y) => x - y);
-  return { checked: errs.length, medianError: errs.length ? errs[errs.length >> 1] : NaN, within50cents: errs.length ? errs.filter((e) => e < 0.5).length / errs.length : 0 };
+  signed.sort((x, y) => x - y);
+  return {
+    checked: errs.length,
+    medianError: errs.length ? errs[errs.length >> 1] : NaN,
+    within50cents: errs.length ? errs.filter((e) => e < 0.5).length / errs.length : 0,
+    medianSigned: signed.length ? signed[signed.length >> 1] : NaN,
+  };
+}
+
+/** Best time offset (s) and chroma agreement between two recordings (b shifted by offset matches a). */
+export function compareRecordings(a: Pcm, b: Pcm, opts: { maxOffset?: number } = {}): { offset: number; agreement: number } {
+  const ca = chromagram(a);
+  const cb = chromagram(b);
+  const maxLag = Math.round((opts.maxOffset ?? 2) / ca.hop);
+  let best = { offset: 0, agreement: -1 };
+  for (let lag = -maxLag; lag <= maxLag; lag++) {
+    let s = 0;
+    let n = 0;
+    for (let i = 0; i < ca.frames.length; i += 2) {
+      const j = i + lag;
+      if (j < 0 || j >= cb.frames.length) continue;
+      const r = corr(ca.frames[i], cb.frames[j]);
+      if (!Number.isNaN(r)) {
+        s += r;
+        n++;
+      }
+    }
+    if (n > 10 && s / n > best.agreement) best = { offset: lag * ca.hop, agreement: s / n };
+  }
+  return best;
 }

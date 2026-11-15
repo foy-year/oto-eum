@@ -173,6 +173,43 @@ export interface VideoEvent {
   flash?: number;
   invert?: boolean;
   rotate?: number;
+  /** Shake amplitude (fraction of the cell) at attack, decaying with punchDecay. */
+  shake?: number;
+  /** Extra zoom reached by the end of the sounding part (slow push-in). */
+  zoomDrift?: number;
+  /** Time after which the event is only holding its last frame (no longer sounding). */
+  holdFrom?: number;
+  /** Draw held frames in greyscale. */
+  greyHeld?: boolean;
+}
+
+export type FlipMode = 'none' | 'alternate' | 'vertical' | 'both' | 'random';
+
+/** A screen-wide hit (from the notes of a "pulse" track, e.g. the kick). */
+export interface Pulse {
+  time: number;
+  strength: number;
+}
+
+export interface TextOverlay {
+  id: Id;
+  text: string;
+  start: number;
+  end: number;
+  /** Anchor position (0..1); x is the left/centre/right edge per align, y the text's centre. */
+  x: number;
+  y: number;
+  /** Font size as a fraction of the video height. */
+  size: number;
+  color: string;
+  stroke?: string;
+  font?: 'sans' | 'serif' | 'mono' | 'rounded';
+  bold?: boolean;
+  align?: 'left' | 'center' | 'right';
+  /** 'box' = background behind the text, 'card' = full-screen background (title card). */
+  background?: 'none' | 'box' | 'card';
+  backgroundColor?: string;
+  anim?: 'none' | 'fade' | 'pop' | 'type' | 'slide';
 }
 
 export type SyncLayout = 'single' | 'grid' | 'columns' | 'rows';
@@ -205,6 +242,21 @@ export interface VideoSyncSettings {
   /** When a track's note ends, keep showing its last frame instead of black. */
   holdLastFrame: boolean;
   background: string;
+  /** Overrides alternateFlip when set. */
+  flipMode?: FlipMode;
+  /** Alternating rotation per note, degrees. */
+  rotate?: number;
+  /** Shake on attack (fraction of the cell). */
+  shake?: number;
+  /** Slow zoom-in over each note (e.g. 0.1 = +10 %). */
+  zoomDrift?: number;
+  /** Greyscale while a cell only holds its last frame. */
+  greyHeld?: boolean;
+  /** Tracks whose notes pulse the whole screen. */
+  pulseTrackIds?: Id[];
+  pulseFlash?: number;
+  pulseZoom?: number;
+  pulseShake?: number;
 }
 
 /** A manually placed clip in the Video Editor. */
@@ -241,6 +293,8 @@ export interface Project {
   /** Layout changes over time. Empty/undefined: one layout from videoSync for the whole video. */
   videoScenes?: VideoScene[];
   videoClips: VideoClip[];
+  /** Text overlays and title cards. */
+  texts?: TextOverlay[];
   /** Normalise the master to this loudness (LUFS), with a true-peak limiter. */
   masterLoudness?: number;
   /** Limiter ceiling for masterLoudness, dBFS (default −1). */
