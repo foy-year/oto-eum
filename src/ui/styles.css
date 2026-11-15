@@ -77,3 +77,9 @@ textarea { font: inherit; color: inherit; background: #222838; border: 1px solid
 .chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 12px; }
 .chip.on { border-color: var(--accent); }
 .chip button { padding: 0 4px; }
+.finder { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.cand { border: 1px solid var(--line); border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.cand img, .cand .noimg { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px; background: #0b0d14; }
+.cand .row { margin: 0; gap: 4px; }
+.meter { height: 4px; background: #222838; border-radius: 2px; overflow: hidden; }
+.meter span { display: block; height: 100%; background: var(--accent); }

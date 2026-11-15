@@ -29,12 +29,12 @@ Requires Node ≥ 22.18 (the server runs TypeScript directly and uses the built-
 | # | Tool | What it does |
 |---|------|--------------|
 | 1 | **Library** | Upload audio/video (mp3, wav, ogg, flac, m4a, mp4, webm, mov, mkv…). Probes duration, resolution, fps. Mark a file as backing audio. |
-| 2 | **Sound Editor** | Waveform with region selection → create *samples* (non-destructive regions). Auto pitch detection (YIN) for the root note, onset detection + auto-slicing, reverse, fades, gain, pitch mode (`resample` = classic 音MAD pitching / `fixed`), sustain (`cut` / one-shot / `loop`), audition at any note, bounce to a new file. |
-| 3 | **MIDI Extractor** | Audio/video → MIDI. **Polyphonic**: Spotify Basic Pitch (neural, in-browser). **Monophonic**: YIN tracker (vocals, speech-melody "tuning", lead lines). Region-limited analysis, Hz limits, top-melody-only, split chords into voices/tracks, BPM estimation. Also imports `.mid`. |
-| 4 | **MIDI Editor** | Piano roll: draw/move/resize/delete, multi-select, keyboard transpose, ghost notes of other tracks, grid/snap, zoom. Ops: quantize (full/50%), transpose, octave, legato, monophonize, merge repeats, velocity, split voices → tracks. Export `.mid` (one or all tracks). |
-| 5 | **Sound Applier** | Assign a sample to each MIDI track; gain/pan/mute; mix with backing audio; render & export WAV. Pitching uses 4-point Hermite resampling. |
+| 2 | **Sound Editor** | Waveform with region selection → create *samples* (non-destructive regions). **Sample finder**: ranks pitched syllables in a source (thumbnail, root note, steadiness) → one-click one-shot or vowel loop. Auto root detection, onset detection + auto-slicing, reverse, fades, gain. **Tuning**: flatten pitch 50/100 % (PSOLA) with a pitch-curve view. Pitch modes: `resample` (classic 音MAD: faster = higher), `natural` (PSOLA: keeps speed and formants — voices stay voices), `fixed`. Sustain `cut` / one-shot / `loop`, audition at any note, bounce to a new file. |
+| 3 | **MIDI Extractor** | **Piano-roll (MIDI) video reader**: drag the note area, auto-detect the row grid + note names (from the black/white key shading) and one track per colour, read the whole video (page flips, playhead), verify pitch/octave against the video's audio, set the tempo. Audio/video → MIDI: **polyphonic** Spotify Basic Pitch (neural, in-browser), **monophonic** YIN (vocals, speech-melody, lead lines). Region-limited analysis, Hz limits, top-melody-only, split chords into voices, BPM estimation, `.mid` import. |
+| 4 | **MIDI Editor** | Piano roll: draw/move/resize/delete, multi-select, keyboard transpose, ghost notes of other tracks, grid/snap, zoom. Ops: quantize (full/50%), transpose, octave, legato, monophonize, merge repeats, velocity, split voices → tracks. **Detect tempo** (BPM + grid offset from the notes); grid and quantize follow it. Export `.mid` (one or all tracks). |
+| 5 | **Sound Applier** | Assign a sample to each MIDI track; gain/pan/mute; mix with backing audio. **Auto-level** (equal loudness + per-track ±dB), **master loudness** target (−14 LUFS etc., true-peak limiter), loudness/peak readout (ITU-R BS.1770). Export WAV or M4A (AAC; WebM/Opus where AAC is unavailable). |
 | 6 | **Sound Effector** | Effect chains on a **sample** (baked before pitching), a **track**, or the **master**: gain, pan, low/high/band-pass, EQ bell, shelves, distortion, bitcrusher, delay (ping-pong), reverb (Freeverb), chorus, compressor, tremolo, stutter, reverse, speed/pitch, normalize. Presets (telephone, lo-fi, chipmunk, stutter roll, hall…). |
-| 7 | **Video Synchronizer** | Every note of a track whose sample was cut from a video re-triggers that video region **at the same rate as the audio** (an octave up = 2× speed picture). Layouts: single / grid / columns / rows. Alternate L/R flip, hue-by-pitch, zoom punch, flash, hold-last-frame. Real-time preview and frame-exact export to MP4 (H.264) or WebM (VP9) with audio. |
+| 7 | **Video Synchronizer** | Every note of a track whose sample was cut from a video re-triggers that video region **at the same rate as the audio** (an octave up = 2× speed picture). Layouts: single / grid / columns / rows. Alternate L/R flip, hue-by-pitch, zoom punch, flash, hold-last-frame. **Scenes**: change the layout over time (grid / focus / columns / rows / single / custom drag-and-resize boxes), per-scene visible tracks and order. Real-time preview and frame-exact export to MP4 (H.264) or WebM (VP9) with audio. |
 | 8 | **Video Editor** | Manual clips on layers above the synced video: timing, in/out, speed, position/size, flip, reverse, invert, hue, opacity. **Beat-cut generator**: cuts a video on every onset of the mix (sequential / random / restart). |
 | ☁ | **Cloud & Sharing** | Sign up / sign in, storage quota, move the local library to the cloud, per-file visibility (private / unlisted / public), share a project with collaborators (editor / viewer) with conflict detection, create and browse source packs, “save to my library”, report items. Admins get a moderation queue (take down / restore / dismiss). |
 
@@ -48,12 +48,18 @@ src/core/          UI-agnostic engine — pure TS, unit-tested in Node
   audio/decode.ts    browser: probe + decode any media (Web Audio → Mediabunny fallback)
   analysis/pitch.ts  YIN f0 tracking, root detection, contour → notes
   analysis/onset.ts  spectral-flux onsets, tempo estimation, slicing
+  analysis/pianoRoll.ts  piano-roll video → notes (streaming scanner, grid/colour calibration)
+  analysis/align.ts  notes ↔ audio: pitch/octave alignment, chroma agreement, pitch accuracy
+  analysis/sampleFinder.ts  ranked pitched syllables (steady vowel + onset)
   midi/midi.ts       .mid I/O + editing ops (quantize, legato, voices…)
   midi/transcribe.ts Basic Pitch (lazy-loaded TF.js) / YIN transcription
   render/sampler.ts  Sound Applier: sample-accurate note rendering
   render/effects.ts  pure-JS effect DSP + parameter specs (UI is generated from them)
-  render/mix.ts      project mixdown
-  video/timeline.ts  notes → VideoEvents (shares noteRate() with the sampler ⇒ A/V lock)
+  render/mix.ts      project mixdown, auto-level
+  render/psola.ts    TD-PSOLA: flatten pitch, formant-preserving shift
+  render/loudness.ts BS.1770 loudness, true peak, limiter, normalisation
+  video/timeline.ts  notes → VideoEvents (shares playbackRate() with the sampler ⇒ A/V lock), scenes
+  video/frameStream.ts  RGBA frame access for analysis (WebCodecs)
   video/frames.ts    WebCodecs frame cache (batched sorted decode → ImageBitmap LRU)
   video/compositor.ts draws one frame (layout, flip, hue, punch, flash)
   video/export.ts    offline, frame-exact encode via Mediabunny (MP4/WebM)
@@ -63,9 +69,10 @@ server/            API server: auth, uploads, projects, packs, moderation (+ app
 tests/             vitest unit tests + Playwright e2e (tests/e2e)
 ```
 
-Key design choice: **one timing function for sound and picture.** `noteRate()`
-(`2^((pitch − root)/12)`) decides how fast the sample plays; the video timeline
-uses the same function to decide which source frame to show. The e2e test
+Key design choice: **one timing function for sound and picture.** `playbackRate()`
+(`2^((pitch − root)/12)` in resample mode, 1 in natural/fixed mode) decides how
+fast the sample plays; the video timeline uses the same function to decide which
+source frame to show. The e2e test
 verifies this with a colour-coded video: the exported frame at every probed
 time matches the frame the pitched audio is playing.
 
@@ -124,7 +131,7 @@ it falls back to Opus-in-MP4 or WebM.
 
 - Move heavy DSP / transcription into Web Workers (UI stays responsive on long songs)
 - Source separation (vocals/drums/bass) before MIDI extraction
-- Formant-preserving pitch shift & time-stretch (PSOLA/WSOLA) as an alternative to resampling
+- Time-stretch (WSOLA) for samples
 - Pitch-bend / vibrato from Basic Pitch contours; per-note sample choice (multi-sample instruments)
 - Video: per-note crop/zoom keyframes, chroma key, more layouts, motion-tracked pan
 - Multi-track timeline editor with drag & drop; undo/redo

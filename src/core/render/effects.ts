@@ -6,6 +6,7 @@
  */
 import { type Pcm, clonePcm, lengthOf, normalize, reverse, resample, applyGain, panPcm } from '../audio/pcm';
 import { type Effect, type EffectType, uid } from '../types';
+import { limit } from './loudness';
 
 export interface ParamSpec {
   key: string;
@@ -279,6 +280,7 @@ export const EFFECTS: Record<EffectType, EffectSpec> = {
   reverse: { type: 'reverse', label: 'Reverse', params: [], process: (x) => reverse(x) },
   speed: { type: 'speed', label: 'Speed / pitch', params: [P('rate', 'Rate', 0.25, 4, 1, 0.01, 'x'), P('semitones', 'Semitones', -24, 24, 0, 1, 'st')], process: speed },
   normalize: { type: 'normalize', label: 'Normalize', params: [P('peak', 'Peak', 0.1, 1, 0.98)], process: (x, p) => normalize(x, p.peak) },
+  limiter: { type: 'limiter', label: 'Limiter', params: [P('ceiling', 'Ceiling', -12, 0, -1, 0.1, 'dB'), P('release', 'Release', 0.01, 0.5, 0.08, 0.01, 's')], process: (x, p) => limit(x, p.ceiling, { release: p.release }) },
 };
 
 export function createEffect(type: EffectType, params: Record<string, number> = {}): Effect {

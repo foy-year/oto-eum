@@ -84,3 +84,30 @@ describe("sampler 'natural' mode", () => {
     expect(ev[0].rate).toBe(1);
   });
 });
+
+describe('sample finder', () => {
+  it('finds pitched syllables with their steady vowel and root', async () => {
+    const { findSyllables } = await import('../src/core/analysis/sampleFinder');
+    const { mixInto } = await import('../src/core/audio/pcm');
+    // three syllables: [noise "consonant" + vowel]; the 2nd glides then holds
+    let p = createPcm(SR, 1, SR * 2.2);
+    const syl = (at: number, f: (t: number) => number, len: number) => {
+      const cons = createPcm(SR, 1, 0.04 * SR);
+      cons.channels[0].forEach((_, i, a) => (a[i] = (Math.random() * 2 - 1) * 0.15));
+      p = mixInto(p, cons, at);
+      p = mixInto(p, voice(f, len), at + 0.04);
+    };
+    syl(0.1, () => 196, 0.3); // G3
+    syl(0.8, (t) => (t < 0.12 ? 220 * Math.pow(2, (t - 0.12) * 10 / 12) : 220), 0.35); // glide into A3
+    syl(1.5, () => 147, 0.25); // D3
+    const found = findSyllables(p).sort((a, b) => a.start - b.start);
+    expect(found.length).toBeGreaterThanOrEqual(3);
+    const near = (t: number) => found.find((c) => Math.abs(c.steadyStart - t) < 0.2)!;
+    expect(near(0.15).rootMidi).toBeCloseTo(55, 0);
+    expect(near(0.95).rootMidi).toBeCloseTo(57, 0);
+    expect(near(0.95).steadyStart).toBeGreaterThan(0.9); // skips the glide
+    expect(near(1.55).rootMidi).toBeCloseTo(50, 0);
+    for (const c of found.slice(0, 3)) expect(c.start).toBeLessThanOrEqual(c.steadyStart);
+    expect(near(0.15).start).toBeLessThan(0.15); // includes the consonant
+  });
+});

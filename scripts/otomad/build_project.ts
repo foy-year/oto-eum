@@ -13,7 +13,7 @@ import { detectOnsets } from '../../src/core/analysis/onset';
 import { stft } from '../../src/core/analysis/fft';
 import { createProject, createSample, createTrack } from '../../src/core/project';
 import { createEffect } from '../../src/core/render/effects';
-import { mixProject } from '../../src/core/render/mix';
+import { autoLevel, mixProject } from '../../src/core/render/mix';
 import { quantize, gridSeconds, shiftTime, endTime } from '../../src/core/midi/midi';
 import type { Note, NoteTrack, Sample, VideoClip } from '../../src/core/types';
 
@@ -169,8 +169,14 @@ project.videoClips = [clip];
 // ---------------------------------------------------------------------------
 // 5. Mix
 // ---------------------------------------------------------------------------
-// auto-level: loudness (RMS over the audible part) of each stem → target per role
-const TARGET: Record<string, number> = { 'Main (family)': 0.13, 'Harmony (bedroom)': 0.06, 'Wild (sofa)': 0.08, 'Bass (intro)': 0.09, 'Chorus (logo card)': 0.045, 'Arpeggio (jingle)': 0.05, Kick: 0.13, Snare: 0.07, Hat: 0.03, 'Outro (end card)': 0.12 };
+// auto-level (core): every track to −20 LUFS + its offset; master normalised to −14 LUFS
+const OFFSET: Record<string, number> = { 'Main (family)': 3, 'Harmony (bedroom)': -3, 'Wild (sofa)': 0, 'Bass (intro)': 0, 'Chorus (logo card)': -5, 'Arpeggio (jingle)': -3, Kick: 1, Snare: -2, Hat: -8, 'Outro (end card)': 2 };
+for (const t of project.tracks) t.levelOffset = OFFSET[t.name] ?? 0;
+const lv = await autoLevel(project, async () => src);
+for (const t of project.tracks) if (lv[t.id]) t.gain = lv[t.id].gain;
+project.masterEffects = [createEffect('compressor', { threshold: -14, ratio: 3, attack: 0.003, release: 0.12, makeup: 2 })];
+project.masterLoudness = -14;
+project.masterCeiling = -1;
 const activeRms = (p: Pcm) => {
   const x = toMono(p);
   const win = 2400;
@@ -179,14 +185,8 @@ const activeRms = (p: Pcm) => {
   const on = vals.filter((v) => v > 0.005);
   return on.length ? Math.sqrt(on.reduce((s, v) => s + v * v, 0) / on.length) : 0;
 };
-{
-  const first = await mixProject(project, async () => src);
-  for (const t of project.tracks) {
-    const r = first.stems[t.id] && activeRms(first.stems[t.id]);
-    if (r && TARGET[t.name]) t.gain = (t.gain ?? 1) * (TARGET[t.name] / r);
-  }
-}
-const { master, stems } = await mixProject(project, async () => src);
+const { master, stems, loudness } = await mixProject(project, async () => src);
+console.log(`master ${loudness.integrated.toFixed(1)} LUFS, true peak ${loudness.truePeak.toFixed(1)} dBTP`);
 for (const t of project.tracks) {
   const st = stems[t.id];
   if (st) console.log(`stem ${t.name.padEnd(20)} notes=${String(t.notes.length).padStart(3)} gain=${(t.gain ?? 1).toFixed(2)} active rms=${activeRms(st).toFixed(3)}`);

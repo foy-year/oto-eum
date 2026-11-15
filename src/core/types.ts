@@ -49,6 +49,8 @@ export interface NoteTrack {
   gain?: number;
   /** -1 (left) .. 1 (right) */
   pan?: number;
+  /** Auto-level: loudness relative to the other tracks, dB (e.g. +3 for the lead). */
+  levelOffset?: number;
   effects?: Effect[];
 }
 
@@ -112,7 +114,8 @@ export type EffectType =
   | 'stutter'
   | 'reverse'
   | 'speed'
-  | 'normalize';
+  | 'normalize'
+  | 'limiter';
 
 export interface Effect {
   id: Id;
@@ -238,6 +241,10 @@ export interface Project {
   /** Layout changes over time. Empty/undefined: one layout from videoSync for the whole video. */
   videoScenes?: VideoScene[];
   videoClips: VideoClip[];
+  /** Normalise the master to this loudness (LUFS), with a true-peak limiter. */
+  masterLoudness?: number;
+  /** Limiter ceiling for masterLoudness, dBFS (default −1). */
+  masterCeiling?: number;
   /** Optional backing audio (e.g. the original song) mixed under the render. */
   backingAudioId?: Id;
   backingGain?: number;

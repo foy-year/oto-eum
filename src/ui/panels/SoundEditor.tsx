@@ -8,6 +8,7 @@ import { createSample } from '../../core/project';
 import { prepareSample, renderTrack } from '../../core/render/sampler';
 import type { Sample } from '../../core/types';
 import { play, stop } from '../player';
+import { SampleFinder } from './SampleFinder';
 import { analyzeF0, flattenPitch } from '../../core/render/psola';
 
 /** Pitch over the sample: grey = original, green = after flattening; dashed = root note. */
@@ -76,6 +77,7 @@ export function SoundEditor() {
   const [onsets, setOnsets] = useState<number[]>([]);
   const [sensitivity, setSensitivity] = useState(1.5);
   const [testPitch, setTestPitch] = useState(60);
+  const [finds, setFinds] = useState<{ start: number; end: number }[]>([]);
 
   useEffect(() => {
     setPcm(null);
@@ -85,7 +87,10 @@ export function SoundEditor() {
 
   const samples = project.samples.filter((s) => s.sourceId === asset?.id);
   const current = project.samples.find((s) => s.id === selectedSampleId);
-  const regions = useMemo(() => samples.map((s) => ({ start: s.start, end: s.end, label: s.name, active: s.id === selectedSampleId })), [samples, selectedSampleId]);
+  const regions = useMemo(
+    () => [...finds.map((f) => ({ ...f, label: '' })), ...samples.map((s) => ({ start: s.start, end: s.end, label: s.name, active: s.id === selectedSampleId }))],
+    [samples, selectedSampleId, finds],
+  );
 
   if (!asset) return <div className="panel empty">Upload a source in the Library first.</div>;
 
@@ -155,6 +160,8 @@ export function SoundEditor() {
           </button>
         </Row>
       </Section>
+
+      <SampleFinder asset={asset} pcm={pcm} onRegions={setFinds} />
 
       <Section title={`Samples from this source (${samples.length})`}>
         <table className="list">

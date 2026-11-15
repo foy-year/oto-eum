@@ -36,10 +36,21 @@ try {
   await page.mouse.up();
   await page.getByRole('button', { name: /Create sample from selection/ }).click();
   await page.waitForSelector('text=Sample: ');
+  // #3 tuning controls on the new sample
+  await page.locator('label:has-text("Pitch mode") select').selectOption('natural');
+  await page.locator('label:has-text("Flatten pitch") select').selectOption('1');
+  await page.waitForSelector('text=green: flattened');
+  // #2 sample finder
+  await page.getByRole('button', { name: 'Find pitched syllables' }).click();
+  await idle();
+  const cands = await page.locator('.cand').count();
+  console.log('sample finder candidates:', cands);
+  if (!cands) throw new Error('sample finder found nothing');
+  await page.locator('.cand').first().getByRole('button', { name: '+ loop' }).click();
   await shot('2-sound-editor');
   // 3 MIDI extractor: mono on the melody
   await tab('MIDI Extractor');
-  await page.locator('.section').nth(1).locator('select').first().selectOption({ label: 'melody.mp3' });
+  await page.locator('.section', { hasText: 'Extract MIDI from audio / video' }).locator('select').first().selectOption({ label: 'melody.mp3' });
   await idle();
   await page.locator('select').filter({ hasText: 'Polyphonic' }).selectOption('mono');
   await page.getByRole('button', { name: 'Extract MIDI' }).click();
@@ -54,7 +65,21 @@ try {
   // 5 Sound applier: assign sample, render
   await tab('Sound Applier');
   await page.locator('.list tbody tr').first().locator('select').selectOption({ index: 1 });
+  // #5 auto-level + master loudness + M4A
+  await page.getByRole('button', { name: 'Auto-level tracks' }).click();
+  await idle();
+  await page.locator('label:has-text("Master loudness") select').selectOption('-14');
   await page.getByRole('button', { name: /Render & play/ }).click();
+  await idle();
+  const mixLabel = await page.locator('.hint', { hasText: /^Mix: / }).first().innerText();
+  console.log('mix:', mixLabel);
+  const m = /(-?[\d.−-]+) LUFS/.exec(mixLabel.replace('−', '-'));
+  if (!m || Math.abs(parseFloat(m[1]) + 14) > 0.6) throw new Error('master loudness not at -14 LUFS: ' + mixLabel);
+  const dlA = page.waitForEvent('download', { timeout: 60000 });
+  await page.getByRole('button', { name: 'Export M4A' }).click();
+  await dlA;
+  await idle();
+  console.log('audio export:', await page.locator('text=/Exported (M4A|WEBM)/').first().innerText());
   await idle();
   await shot('5-applier');
   // 6 Effects: add preset on master, preview
@@ -65,6 +90,10 @@ try {
   await shot('6-effects');
   // 7 Video sync: preview + export
   await tab('Video Synchronizer');
+  // #4 scenes
+  await page.getByRole('button', { name: /\+ Scene at/ }).click();
+  await page.locator('.section:has(h3:text-matches("^Scenes"))').locator('select').first().selectOption('focus');
+  await page.waitForSelector('.scene-preview');
   await page.locator('select').filter({ hasText: '1280x720' }).selectOption('640x360');
   await page.getByRole('button', { name: '▶ Play' }).click();
   await idle();
@@ -89,6 +118,7 @@ try {
   await browser.close();
   await server.close();
 }
-const real = errors.filter((e) => !/AudioContext was not allowed|play\(\) failed/.test(e));
+// aborted loads of revoked preview blobs (element unmounted) are harmless
+const real = errors.filter((e) => !/AudioContext was not allowed|play\(\) failed|request failed: blob:|ERR_FILE_NOT_FOUND/.test(e));
 console.log(real.length ? 'ERRORS:\n' + real.join('\n') : 'UI smoke test passed');
 process.exit(real.length ? 1 : 0);

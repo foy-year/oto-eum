@@ -311,3 +311,41 @@ describe('video scenes', () => {
     expect(f.a.x).toBeGreaterThanOrEqual(0.5);
   });
 });
+
+describe('loudness & mix helpers', () => {
+  it('measures BS.1770 loudness of a reference tone', async () => {
+    const { measureLoudness } = await import('../src/core/render/loudness');
+    // 997 Hz sine, amplitude 0.1 → −23.0 LUFS (stereo: +3 dB → −20.0)
+    const mono = sine(997, 5, 48000, 0.1);
+    expect(measureLoudness(mono).integrated).toBeCloseTo(-23.0, 0);
+    const stereo = { sampleRate: 48000, channels: [mono.channels[0], mono.channels[0]] };
+    expect(measureLoudness(stereo).integrated).toBeCloseTo(-20.0, 0);
+    expect(measureLoudness(mono).truePeak).toBeCloseTo(-20, 0);
+  });
+
+  it('normalizes to a loudness target and limits peaks', async () => {
+    const { measureLoudness, normalizeLoudness } = await import('../src/core/render/loudness');
+    const p = sine(440, 4, 48000, 0.05);
+    for (let i = 0; i < 2000; i++) p.channels[0][48000 + i] = Math.sin(i) * 0.9; // a loud transient
+    const { pcm } = normalizeLoudness(p, -14, -1);
+    const m = measureLoudness(pcm);
+    expect(m.integrated).toBeCloseTo(-14, 0);
+    expect(peak(pcm)).toBeLessThanOrEqual(Math.pow(10, -1 / 20) + 1e-4);
+  });
+
+  it('auto-levels tracks to equal loudness (plus offsets)', async () => {
+    const { autoLevel } = await import('../src/core/render/mix');
+    const project = createProject();
+    project.sampleRate = 48000;
+    const s = createSample('src', 0, 0.5, { rootPitch: 69 });
+    project.samples.push(s);
+    const notes = [note(69, 0, 0.5), note(72, 0.5, 0.5), note(76, 1, 0.5)];
+    project.tracks.push(createTrack('loud', { sampleId: s.id, notes, gain: 2 }), createTrack('quiet', { sampleId: s.id, notes, gain: 0.1, levelOffset: 3 }));
+    const res = await autoLevel(project, async () => sine(440, 1, 48000, 0.5), { targetLufs: -20 });
+    project.tracks.forEach((t) => (t.gain = res[t.id].gain));
+    const { stems } = await mixProject(project, async () => sine(440, 1, 48000, 0.5));
+    const { measureLoudness } = await import('../src/core/render/loudness');
+    expect(measureLoudness(stems[project.tracks[0].id]).integrated).toBeCloseTo(-20, 0);
+    expect(measureLoudness(stems[project.tracks[1].id]).integrated).toBeCloseTo(-17, 0);
+  });
+});

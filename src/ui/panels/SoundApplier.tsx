@@ -1,24 +1,30 @@
 import { useState } from 'react';
 import { download, job, loadPcm, useStore } from '../store';
 import { Check, Num, Pick, Row, Section } from '../widgets';
-import { mixProject } from '../../core/render/mix';
+import { autoLevel, mixProject } from '../../core/render/mix';
+import type { LoudnessResult } from '../../core/render/loudness';
+import { exportAudio } from '../../core/video/export';
 import { encodeWav } from '../../core/audio/wav';
 import { type Pcm, durationOf } from '../../core/audio/pcm';
 import { midiToName } from '../../core/analysis/pitch';
 import { play, stop } from '../player';
 
 /** Shared render cache so the video panel can reuse the last mix. */
-export const lastMix: { pcm: Pcm | null; key: string } = { pcm: null, key: '' };
+export const lastMix: { pcm: Pcm | null; key: string; loudness?: LoudnessResult } = { pcm: null, key: '' };
 
 export async function renderMix(onProgress?: (f: number, l: string) => void): Promise<Pcm> {
   const { project } = useStore.getState();
-  const key = JSON.stringify([project.tracks, project.samples, project.masterEffects, project.backingAudioId, project.backingGain, project.sampleRate]);
+  const key = JSON.stringify([project.tracks, project.samples, project.masterEffects, project.backingAudioId, project.backingGain, project.sampleRate, project.masterLoudness, project.masterCeiling]);
   if (lastMix.pcm && lastMix.key === key) return lastMix.pcm;
-  const { master } = await mixProject(project, loadPcm, { onProgress });
+  const { master, loudness } = await mixProject(project, loadPcm, { onProgress });
   lastMix.pcm = master;
   lastMix.key = key;
+  lastMix.loudness = loudness;
   return master;
 }
+
+const describeLoudness = (l?: LoudnessResult) =>
+  l ? `${Number.isFinite(l.integrated) ? l.integrated.toFixed(1) : '−∞'} LUFS, peak ${Number.isFinite(l.truePeak) ? l.truePeak.toFixed(1) : '−∞'} dBTP` : '';
 
 /** Sound Applier: assign samples to MIDI tracks, mix, render. */
 export function SoundApplier() {
@@ -38,6 +44,7 @@ export function SoundApplier() {
               <th>Notes</th>
               <th>Sample</th>
               <th>Gain</th>
+              <th title="Loudness relative to the other tracks, used by Auto-level">Level ±dB</th>
               <th>Pan</th>
               <th>Mute</th>
               <th>In video</th>
@@ -54,6 +61,9 @@ export function SoundApplier() {
                 </td>
                 <td>
                   <Num label="" value={t.gain ?? 1} step={0.05} width={60} onChange={(v) => updateTrack(t.id, { gain: v })} />
+                </td>
+                <td>
+                  <Num label="" value={t.levelOffset ?? 0} step={1} width={50} onChange={(v) => updateTrack(t.id, { levelOffset: v || undefined })} />
                 </td>
                 <td>
                   <Num label="" value={t.pan ?? 0} step={0.1} min={-1} max={1} width={60} onChange={(v) => updateTrack(t.id, { pan: v })} />
@@ -89,7 +99,44 @@ export function SoundApplier() {
           <Pick label="Sample rate" value={String(project.sampleRate)} options={['44100', '48000'].map((v) => ({ value: v, label: v }))} onChange={(v) => update((p) => void (p.sampleRate = +v))} />
         </Row>
         <Row>
-          <button className="primary" onClick={() => job('Rendering mix…', async () => play(await renderMix((f, l) => setLabel(`${l} ${(f * 100).toFixed(0)}%`))))}>
+          <button
+            title="Set every track's gain so all tracks are equally loud (plus their Level ±dB)"
+            onClick={() =>
+              job('Measuring track loudness…', async () => {
+                const res = await autoLevel(useStore.getState().project, loadPcm);
+                update((p) => {
+                  for (const t of p.tracks) if (res[t.id]) t.gain = Math.round(res[t.id].gain * 1000) / 1000;
+                });
+                setLabel(`Auto-levelled ${Object.keys(res).length} tracks to −20 LUFS (+ their Level ±dB).`);
+              })
+            }
+          >
+            Auto-level tracks
+          </button>
+          <Pick
+            label="Master loudness"
+            value={project.masterLoudness == null ? 'off' : String(project.masterLoudness)}
+            options={[
+              { value: 'off', label: 'off (soft clip only)' },
+              { value: '-14', label: '−14 LUFS (YouTube / streaming)' },
+              { value: '-16', label: '−16 LUFS (quieter)' },
+              { value: '-11', label: '−11 LUFS (loud)' },
+            ]}
+            onChange={(v) => update((p) => void (p.masterLoudness = v === 'off' ? undefined : +v))}
+          />
+          {project.masterLoudness != null && <Num label="Ceiling" value={project.masterCeiling ?? -1} step={0.5} unit="dBTP" onChange={(v) => update((p) => void (p.masterCeiling = Math.min(0, v)))} />}
+        </Row>
+        <Row>
+          <button
+            className="primary"
+            onClick={() =>
+              job('Rendering mix…', async () => {
+                const pcm = await renderMix((f, l) => setLabel(`${l} ${(f * 100).toFixed(0)}%`));
+                setLabel(`Mix: ${durationOf(pcm).toFixed(2)} s · ${describeLoudness(lastMix.loudness)}`);
+                play(pcm);
+              })
+            }
+          >
             ▶ Render &amp; play
           </button>
           <button onClick={stop}>■ Stop</button>
@@ -98,11 +145,23 @@ export function SoundApplier() {
               job('Rendering WAV…', async () => {
                 const pcm = await renderMix();
                 download(encodeWav(pcm), `${project.name}.wav`, 'audio/wav');
-                setLabel(`Exported ${durationOf(pcm).toFixed(2)} s`);
+                setLabel(`Exported ${durationOf(pcm).toFixed(2)} s · ${describeLoudness(lastMix.loudness)}`);
               })
             }
           >
             Export WAV
+          </button>
+          <button
+            onClick={() =>
+              job('Encoding audio…', async () => {
+                const pcm = await renderMix();
+                const r = await exportAudio(pcm, 'm4a');
+                download(r.blob, `${project.name}.${r.extension}`, r.blob.type);
+                setLabel(`Exported ${r.extension.toUpperCase()} (${r.codec}) · ${describeLoudness(lastMix.loudness)}`);
+              })
+            }
+          >
+            Export M4A
           </button>
           <span className="hint">{label}</span>
         </Row>

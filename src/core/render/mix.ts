@@ -3,6 +3,7 @@ import { type Pcm, createPcm, mixInto, softClip, lengthOf } from '../audio/pcm';
 import type { Project } from '../types';
 import { renderNoteTrack } from './sampler';
 import { applyEffects } from './effects';
+import { measureLoudness, normalizeLoudness, stemLoudness, type LoudnessResult } from './loudness';
 
 export type SourceLoader = (sourceId: string) => Promise<Pcm>;
 
@@ -17,6 +18,7 @@ export interface MixResult {
   master: Pcm;
   /** Per-track stems (post track effects, pre master). */
   stems: Record<string, Pcm>;
+  loudness: LoudnessResult;
 }
 
 export async function mixProject(project: Project, load: SourceLoader, opts: MixOptions = {}): Promise<MixResult> {
@@ -41,6 +43,27 @@ export async function mixProject(project: Project, load: SourceLoader, opts: Mix
   opts.onProgress?.(tracks.length / (tracks.length + 1), 'Master effects');
   if (project.masterEffects.length) master = applyEffects(master, project.masterEffects);
   if (lengthOf(master) === 0) master = createPcm(sr, 2, sr * 0.1);
+  master = project.masterLoudness != null ? normalizeLoudness(master, project.masterLoudness, project.masterCeiling ?? -1).pcm : softClip(master);
   opts.onProgress?.(1, 'Done');
-  return { master: softClip(master), stems };
+  return { master, stems, loudness: measureLoudness(master) };
+}
+
+/**
+ * Gains that bring every sampled track to the same loudness (plus its
+ * levelOffset). Returns { trackId: gain } and the measured loudness.
+ */
+export async function autoLevel(project: Project, load: SourceLoader, opts: { targetLufs?: number } = {}): Promise<Record<string, { gain: number; before: number; after: number }>> {
+  const target = opts.targetLufs ?? -20;
+  const { stems } = await mixProject({ ...project, masterEffects: [], masterLoudness: undefined, backingAudioId: undefined }, load, { includeBacking: false });
+  const out: Record<string, { gain: number; before: number; after: number }> = {};
+  for (const t of project.tracks) {
+    const st = stems[t.id];
+    if (!st) continue;
+    const L = stemLoudness(st);
+    if (!Number.isFinite(L)) continue;
+    const want = target + (t.levelOffset ?? 0);
+    const gain = Math.max(0.01, Math.min(20, (t.gain ?? 1) * Math.pow(10, (want - L) / 20)));
+    out[t.id] = { gain, before: L, after: want };
+  }
+  return out;
 }

@@ -119,3 +119,22 @@ export async function exportVideo(o: ExportOptions): Promise<ExportResult> {
   o.onProgress?.(1);
   return { blob: new Blob([buf], { type: mime }), mime, extension: fmt.ext, videoCodec: fmt.v, audioCodec: fmt.a };
 }
+
+/** Audio-only export: M4A (AAC) where the browser can encode it, else WebM (Opus). */
+export async function exportAudio(audio: Pcm, prefer: 'm4a' | 'webm' = 'm4a'): Promise<{ blob: Blob; extension: 'm4a' | 'webm'; codec: AudioCodec }> {
+  const order = prefer === 'm4a' ? (['m4a', 'webm'] as const) : (['webm', 'm4a'] as const);
+  for (const ext of order) {
+    const codecs: AudioCodec[] = ext === 'm4a' ? ['aac'] : ['opus', 'vorbis'];
+    const codec = await getFirstEncodableAudioCodec(codecs, { numberOfChannels: audio.channels.length, sampleRate: audio.sampleRate });
+    if (!codec) continue;
+    const output = new Output({ format: ext === 'm4a' ? new Mp4OutputFormat({ fastStart: 'in-memory' }) : new WebMOutputFormat(), target: new BufferTarget() });
+    const src = new AudioBufferSource({ codec, quality: QUALITY_HIGH });
+    output.addAudioTrack(src);
+    await output.start();
+    const step = 5;
+    for (let t = 0; t < durationOf(audio); t += step) await src.add(toAudioBuffer(slice(audio, t, Math.min(durationOf(audio), t + step))));
+    await output.finalize();
+    return { blob: new Blob([(output.target as BufferTarget).buffer!], { type: ext === 'm4a' ? 'audio/mp4' : 'audio/webm' }), extension: ext, codec };
+  }
+  throw new Error('This browser cannot encode compressed audio — use WAV export.');
+}
